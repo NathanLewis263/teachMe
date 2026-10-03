@@ -1,2 +1,63 @@
 @import "tailwindcss";
 @source "./renderer.tsx";
+
+.annotation-stroke {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: draw-stroke 850ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.annotation-fill {
+  animation: reveal-fill 250ms ease-out 650ms both;
+}
+@keyframes draw-stroke {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes reveal-fill {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .annotation-stroke, .annotation-fill { animation: none; }
+}
+
+/* Motion marks a teaching change; the desktop itself stays still. */
+.desktop-annotations { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.annotation-stroke { stroke-width: 3; filter: drop-shadow(0 1px 2px #10232980); animation: draw-stroke var(--draw-duration, 500ms) cubic-bezier(.22, 1, .36, 1) var(--draw-delay, 0ms) both; }
+.annotation-label { animation: label-in 220ms ease-out both; }
+.svg-motion { animation: move-shape var(--motion-duration) cubic-bezier(.45, 0, .55, 1) infinite alternate; }
+.lesson-board { position: fixed; left: 40px; top: 12vh; width: min(680px, calc(100vw - 490px)); max-height: 82vh; color: #f1f5f4; background: #14282ff5; border: 1px solid #a9d8ce28; border-radius: 22px; box-shadow: 0 22px 70px #05192030, 0 2px 8px #05192018; overflow: hidden; animation: board-in 320ms cubic-bezier(.2,.8,.2,1) both; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.lesson-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 23px 28px 18px; border-bottom: 1px solid #ffffff0d; }
+.lesson-heading h2 { margin: 0; font-size: 19px; line-height: 1.3; font-weight: 550; letter-spacing: -.4px; }
+.lesson-heading span { color: #97b0b5; font-size: 12px; white-space: nowrap; }
+.lesson-svg { display: block; width: 100%; height: auto; }
+.diagram-label { fill: #dbe7e6; font-size: 13px; font-weight: 500; }
+.lesson-part { animation: part-in 360ms cubic-bezier(.22,1,.36,1) both; transition: opacity 220ms ease; }
+.lesson-progress { display: flex; gap: 6px; padding: 0 28px 22px; }
+.lesson-progress i { height: 3px; flex: 1; background: #ffffff12; border-radius: 3px; transition: background 260ms ease; }
+.lesson-progress .shown { background: #83e8cb; }
+.lesson-notes { padding: 22px 28px 26px; }
+.lesson-notes h3 { margin: 0 0 12px; font-size: 18px; color: #83e8cb; }
+.lesson-notes p { margin: 0 0 16px; white-space: pre-wrap; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
+.lesson-formula { margin: 0 0 18px; padding: 14px 16px; border: 1px solid #7cbbff30; border-radius: 10px; background: #7cbbff0a; color: #b9daff; white-space: pre-wrap; overflow-wrap: anywhere; font: 15px/1.55 ui-monospace, monospace; }
+.lesson-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; line-height: 1.45; }
+.lesson-table th, .lesson-table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid #ffffff16; overflow-wrap: anywhere; white-space: pre-wrap; }
+.lesson-table th { color: #83e8cb; font-weight: 600; background: #ffffff05; }
+.lesson-table tbody tr:nth-child(even) { background: #ffffff03; }
+button { transition: background-color 140ms ease, border-color 140ms ease, opacity 140ms ease; }
+button:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid #83e8cb; outline-offset: 4px; }
+@keyframes board-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes part-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes label-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes move-shape { from { transform: translate(0,0); } to { transform: translate(var(--motion-x),var(--motion-y)); } }
+@media (max-width: 900px) { .lesson-board { left: 20px; width: calc(100vw - 440px); } }
+@media (prefers-reduced-motion: reduce) {
+  .annotation-stroke, .annotation-label, .annotation-fill, .svg-motion, .lesson-board, .lesson-part { animation: none; }
+  .lesson-progress i, button { transition: none; }
+}
+.scene-svg { display: block; width: 100%; aspect-ratio: 5 / 3; overflow: hidden; }
+.scene-object > path { animation: scene-appear 450ms cubic-bezier(.2,.8,.2,1) both; }
+.scene-label { font-family: system-ui, sans-serif; }
+.scene-caption { margin: 0 28px 20px; color: #b3c9cf; font-size: 13px; line-height: 1.5; }
+@keyframes scene-appear { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .scene-object > path { animation: none; } }
