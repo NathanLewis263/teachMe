@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PHYS1121 Week 6 – Oscillations</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fbfbf8; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: #1d2a2e; }
+  .slide { box-sizing: border-box; height: 100%; padding: 56px 72px; display: grid; grid-template-columns: 1.1fr 1fr; grid-template-rows: auto 1fr auto; gap: 24px 48px; }
+  header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; border-bottom: 3px solid #1f6f78; padding-bottom: 14px; }
+  h1 { margin: 0; font-size: 46px; font-weight: 700; }
+  .course { color: #5d6b6f; font-size: 18px; }
+  .text { font-size: 26px; line-height: 1.5; }
+  .text h2 { font-size: 22px; color: #1f6f78; text-transform: uppercase; letter-spacing: .06em; margin: 0 0 10px; }
+  .text ol { padding-left: 1.2em; margin: 8px 0 28px; }
+  .text li { margin-bottom: 8px; }
+  .box { border: 2px dashed #b8c4c6; border-radius: 10px; padding: 16px 20px; font-size: 22px; color: #5d6b6f; }
+  svg.figure { display: block; width: 300px; height: 315px; margin: 18px 0 0 40px; }
+  footer { grid-column: 1 / -1; display: flex; justify-content: space-between; color: #8a979a; font-size: 16px; }
+</style>
+</head>
+<body>
+<div class="slide">
+  <header>
+    <h1>Simple Pendulum</h1>
+    <span class="course">PHYS1121 · Week 6 · Oscillations</span>
+  </header>
+  <div class="text">
+    <h2>Problem 3</h2>
+    A small bob of mass <i>m</i> hangs from a light string of length <i>L</i>.
+    It is pulled aside by a small angle <i>θ</i> and released.
+    <ol type="a">
+      <li>Draw the forces acting on the bob.</li>
+      <li>Find the period <i>T</i> of the oscillation.</li>
+      <li>How does <i>T</i> change if the mass is doubled?</li>
+    </ol>
+    <div class="box">Hint: what happens to sin θ when θ is small?</div>
+  <svg class="figure" viewBox="0 0 400 420" aria-label="Pendulum diagram">
+    <line x1="80" y1="40" x2="320" y2="40" stroke="#1d2a2e" stroke-width="4"/>
+    <g stroke="#1d2a2e" stroke-width="2">
+      <line x1="90" y1="40" x2="75" y2="25"/><line x1="120" y1="40" x2="105" y2="25"/><line x1="150" y1="40" x2="135" y2="25"/><line x1="180" y1="40" x2="165" y2="25"/><line x1="210" y1="40" x2="195" y2="25"/><line x1="240" y1="40" x2="225" y2="25"/><line x1="270" y1="40" x2="255" y2="25"/><line x1="300" y1="40" x2="285" y2="25"/>
+    </g>
+    <line x1="200" y1="40" x2="200" y2="360" stroke="#8a979a" stroke-width="2" stroke-dasharray="8 8"/>
+    <line x1="200" y1="40" x2="300" y2="330" stroke="#1d2a2e" stroke-width="3"/>
+    <path d="M200 120 A80 80 0 0 0 226 116" fill="none" stroke="#1d2a2e" stroke-width="2"/>
+    <text x="214" y="150" font-size="24" font-style="italic" fill="#1d2a2e">θ</text>
+    <text x="262" y="180" font-size="26" font-style="italic" fill="#1d2a2e">L</text>
+    <circle cx="300" cy="330" r="22" fill="#1f6f78"/>
+    <text x="332" y="338" font-size="24" font-style="italic" fill="#1d2a2e">m</text>
+  </svg>
+  </div>
+  <footer><span>Lecture 11 · Dr. A. Smith</span><span>17 / 42</span></footer>
+</div>
+</body>
+</html>
