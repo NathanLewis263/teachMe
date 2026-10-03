@@ -23,7 +23,7 @@ export class ActionGate {
   revision = 0;
   armed = false;
   watchUntil = 0;
-  // Controls arm this after narration, so we do not check before the student can act.
+  // Start checking after narration gives the student a chance to act.
   arm(now = Date.now()) {
     if (this.watchUntil || this.confirmed) return;
     this.armed = true;

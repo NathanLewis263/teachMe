@@ -5,7 +5,7 @@ import { HoldRecorder } from "./hold-recorder";
 import { useEffect, useRef, useState } from "react";
 import type { AppBridge, PlannedLesson } from "./teacher-types";
 import { CourseFiles } from "./course-files";
-const api = () => window.teachMe as AppBridge;
+const api = () => window.teachMe;
 export function TeacherRuntime() {
   const [config, setConfig] =
     useState<Awaited<ReturnType<AppBridge["teacherStatus"]>>>();
@@ -19,9 +19,9 @@ export function TeacherRuntime() {
   const pending = useRef(false),
     operation = useRef(0);
   const audio = useRef<PcmPlayer | undefined>(undefined);
-  const consume = useRef<(plan: PlannedLesson & { requestId: number }) => void>(
-    () => {},
-  );
+  const enqueueSegment = useRef<
+    (plan: PlannedLesson & { requestId: number }) => void
+  >(() => {});
   const readingWait = useRef<(() => void) | undefined>(undefined);
   const [checkpoint, setCheckpoint] = useState<{
     turn: number;
@@ -53,15 +53,6 @@ export function TeacherRuntime() {
     setWaiting(false);
     setBusy(false);
     setNarration("");
-  }
-  function stop() {
-    recorder.current?.cancel();
-    stopLocal();
-    setResult(undefined);
-    setStep(-1);
-    setStatus("Ready");
-    setError("");
-    void api().action("clear");
   }
   useEffect(() => {
     void api()
@@ -101,7 +92,7 @@ export function TeacherRuntime() {
       }
     });
     const segments = api().subscribe("teacher-segment", (value) =>
-      consume.current(value),
+      enqueueSegment.current(value),
     );
     const progress = api().subscribe("teacher-progress", (value) => {
       if (pending.current) setStatus(value);
@@ -141,26 +132,14 @@ export function TeacherRuntime() {
       status,
       error,
       text: narration,
-      busy,
       waiting,
       checking,
       checkpoint: checkpoint?.action,
-      turn: result?.turn,
       step,
       sources: result?.lesson.sources || [],
       researchUnavailable: result?.lesson.researchStatus === "unavailable",
     });
-  }, [
-    status,
-    error,
-    narration,
-    busy,
-    waiting,
-    checking,
-    checkpoint,
-    result,
-    step,
-  ]);
+  }, [status, error, narration, waiting, checking, checkpoint, result, step]);
   async function reveal(plan: PlannedLesson, index: number, id: number) {
     if (id !== operation.current) return;
     const reply = await api().step(plan.turn, index);
@@ -183,17 +162,17 @@ export function TeacherRuntime() {
     setStatus("Thinking");
     let speak = !!(config?.elevenlabs && config.voice);
     // Queue speech in order while the model keeps generating later steps.
-    let chain = Promise.resolve();
-    let received = 0;
+    let playbackQueue = Promise.resolve();
+    let receivedSegments = 0;
     let failed = false;
     let player: PcmPlayer | undefined;
-    consume.current = (plan) => {
+    enqueueSegment.current = (plan) => {
       if (plan.requestId !== id || id !== operation.current || failed) return;
       const index = plan.lesson.steps.length - 1;
-      if (index !== received++) return;
+      if (index !== receivedSegments++) return;
       setResult(plan);
       if (index === 0) setNarration(plan.lesson.steps[0].say);
-      chain = chain
+      playbackQueue = playbackQueue
         .then(async () => {
           if (id !== operation.current || failed) return;
           let revealed = false;
@@ -306,7 +285,7 @@ export function TeacherRuntime() {
         );
     }
     // Earlier validated segments remain readable if generation ends early.
-    await chain;
+    await playbackQueue;
     player?.stop();
     if (audio.current === player) audio.current = undefined;
     if (id === operation.current) {
@@ -362,7 +341,6 @@ export function TeacherRuntime() {
       void api()
         .openSource(result.turn, url)
         .catch(() => setError("Could not open this source."));
-    if (action === "end") stop();
     if (action === "continue") readingWait.current?.();
     if (action === "manual" || action === "check")
       void confirmAction(action, safeScreen);

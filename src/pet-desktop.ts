@@ -65,11 +65,21 @@ export function createPet(
     tray?.setToolTip(`teachMe: ${message || state}`);
   };
   const clamp = () => {
-    const b = pet.getBounds(),
-      a = screen.getDisplayMatching(b).workArea;
+    const bounds = pet.getBounds(),
+      workArea = screen.getDisplayMatching(bounds).workArea;
     pet.setPosition(
-      Math.round(Math.max(a.x, Math.min(b.x, a.x + a.width - b.width))),
-      Math.round(Math.max(a.y, Math.min(b.y, a.y + a.height - b.height))),
+      Math.round(
+        Math.max(
+          workArea.x,
+          Math.min(bounds.x, workArea.x + workArea.width - bounds.width),
+        ),
+      ),
+      Math.round(
+        Math.max(
+          workArea.y,
+          Math.min(bounds.y, workArea.y + workArea.height - bounds.height),
+        ),
+      ),
     );
   };
   const voice = globalVoice(controls, stop, showState);
@@ -100,8 +110,11 @@ export function createPet(
         label: "Move seal to pointer",
         click: () => {
           roaming = false;
-          const p = screen.getCursorScreenPoint();
-          pet.setPosition(p.x - size.width / 2, p.y - size.height + 84);
+          const pointer = screen.getCursorScreenPoint();
+          pet.setPosition(
+            pointer.x - size.width / 2,
+            pointer.y - size.height + 84,
+          );
           clamp();
         },
       },
@@ -126,10 +139,6 @@ export function createPet(
     if (event.senderFrame !== event.sender.mainFrame) return;
     const isPet = event.sender === pet.webContents;
     if (!isPet && event.sender !== controls.webContents) return;
-    if (command === "state" && !isPet && typeof value === "string")
-      showState(value);
-    if (command === "error" && !isPet && typeof value === "string")
-      showState("Error", value);
     if (
       command === "level" &&
       !isPet &&
@@ -210,11 +219,12 @@ export function createPet(
       !!bubble?.text
     )
       return;
-    const b = pet.getBounds(),
-      a = screen.getDisplayMatching(b).workArea;
-    if (b.x <= a.x + 8) direction = 1;
-    if (b.x + b.width >= a.x + a.width - 8) direction = -1;
-    pet.setPosition(b.x + direction, b.y);
+    const bounds = pet.getBounds(),
+      workArea = screen.getDisplayMatching(bounds).workArea;
+    if (bounds.x <= workArea.x + 8) direction = 1;
+    if (bounds.x + bounds.width >= workArea.x + workArea.width - 8)
+      direction = -1;
+    pet.setPosition(bounds.x + direction, bounds.y);
     pet.webContents.send("pet-direction", direction);
     clamp();
   }, 70);

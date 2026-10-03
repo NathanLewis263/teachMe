@@ -90,7 +90,7 @@ export function resolveRoute(raw: unknown, overrides: RouteOverrides): Route {
     context !== "screenshot"
   )
     throw new Error(
-      "Screen annotations need a fresh screenshot. Choose Use my screen, or ask for a whiteboard explanation.",
+      "Screen annotations need a fresh screenshot. Ask to use your screen, or ask for a whiteboard explanation.",
     );
   return { context, rendering };
 }

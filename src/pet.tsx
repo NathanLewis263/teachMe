@@ -8,7 +8,7 @@ export function Pet() {
   const [bubble, setBubble] = useState<PetBubble | null>(null);
   const [safeScreen, setSafeScreen] = useState(false);
   const [direction, setDirection] = useState(1);
-  const text = useRef<HTMLParagraphElement>(null);
+  const transcript = useRef<HTMLParagraphElement>(null);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const command = (name: string, value?: unknown) =>
     void window.teachMe.petCommand(name, value);
@@ -48,9 +48,9 @@ export function Pet() {
     setSafeScreen(false);
   }, [bubble?.operation, bubble?.checkpoint?.expectedAction, bubble?.checking]);
   useEffect(() => {
-    if (text.current) text.current.scrollTop = 0;
+    if (transcript.current) transcript.current.scrollTop = 0;
   }, [bubble?.text]);
-  const recording =
+  const voicePending =
     state === "Listening" || state === "Connecting" || state === "Thinking";
   const visible =
     state !== "Ready" ||
@@ -88,15 +88,15 @@ export function Pet() {
               {detail}
             </p>
           )}
-          {!recording && bubble?.text && (
-            <p className="bubble-transcript" ref={text}>
+          {!voicePending && bubble?.text && (
+            <p className="bubble-transcript" ref={transcript}>
               {bubble.text}
             </p>
           )}
           {state === "Listening" && (
             <p className="bubble-help">Release Control–Shift to ask.</p>
           )}
-          {!recording && bubble?.checkpoint && (
+          {!voicePending && bubble?.checkpoint && (
             <div className="bubble-checkpoint">
               <p>{bubble.checkpoint.expectedAction}</p>
               <details>
@@ -134,7 +134,7 @@ export function Pet() {
               </button>
             </div>
           )}
-          {!recording && bubble?.waiting && (
+          {!voicePending && bubble?.waiting && (
             <button
               className="bubble-continue"
               onClick={() => action("continue")}

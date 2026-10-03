@@ -2,10 +2,6 @@
 import type { ContextChoice, RenderChoice } from "./routing";
 import type { Lesson } from "./lesson";
 
-export type DisplayChoice = {
-  id: number;
-  name: string;
-};
 export type LessonRequest = {
   requestId: number;
   question: string;
@@ -52,7 +48,6 @@ export interface AppBridge {
     elevenlabs: boolean;
     voice: boolean;
   }>;
-  displays(): Promise<DisplayChoice[]>;
   course(action: "status" | "choose" | "remove"): Promise<CourseStatus>;
   plan(request: LessonRequest): Promise<PlannedLesson>;
   speech(
@@ -68,11 +63,9 @@ export type PetBubble = {
   status: string;
   error?: string;
   text: string;
-  busy: boolean;
   waiting: boolean;
   checking: boolean;
   checkpoint?: import("./action-checkpoint").ActionCheckpoint;
-  turn?: number;
   sources: NonNullable<Lesson["sources"]>;
   researchUnavailable?: boolean;
 };

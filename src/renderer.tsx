@@ -1,4 +1,4 @@
-// Main uses query flags to pick the seal, controls, or overlay from this shared bundle.
+// Main uses query flags to pick the seal, lesson runtime, or overlay from this shared bundle.
 import { createRoot } from "react-dom/client";
 import { Pet } from "./pet";
 import { TeacherRuntime } from "./teacher-runtime";

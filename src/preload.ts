@@ -15,7 +15,6 @@ contextBridge.exposeInMainWorld("teachMe", {
   transcribe: (bytes: Uint8Array) =>
     ipcRenderer.invoke("voice-transcribe", bytes),
   teacherStatus: () => ipcRenderer.invoke("teacher-status"),
-  displays: () => ipcRenderer.invoke("displays"),
   course: (action: string) => ipcRenderer.invoke("course", action),
   plan: (request: unknown) => ipcRenderer.invoke("teacher-plan", request),
   stopSpeech: (turn: number) => ipcRenderer.invoke("teacher-speech-stop", turn),

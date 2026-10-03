@@ -1,4 +1,4 @@
-// Main owns the windows and provider calls; controls decide when each step is shown.
+// Main owns windows and provider calls; the renderer times each step with its audio.
 import { researchQuestion, publicSourceUrl } from "./web-research";
 import { trackAnnotation, type ScreenPixels } from "./annotation-tracking";
 import { ActionGate } from "./action-checkpoint";
@@ -335,13 +335,6 @@ app.whenReady().then(() => {
       elevenlabs: !!process.env.ELEVENLABS_API_KEY,
       voice: !!process.env.ELEVENLABS_VOICE_ID,
     };
-  });
-  ipcMain.handle("displays", (event) => {
-    authorize(event);
-    return screen.getAllDisplays().map((display) => ({
-      id: display.id,
-      name: display.label || `Display ${display.id}`,
-    }));
   });
   // Route before capturing; only the lesson request gets the screenshot.
   ipcMain.handle("teacher-plan", async (event, request: LessonRequest) => {
