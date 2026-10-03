@@ -1,5 +1,5 @@
 // Own the seal window and tray menu, and connect their controls to global voice input.
-import { useScreenOnce } from "./screen-state";
+import type { PetBubble } from "./teacher-types";
 import { globalVoice } from "./global-voice";
 import {
   app,
@@ -18,7 +18,7 @@ export function createPet(
   controls: BrowserWindow,
   stop: (newQuestion?: boolean) => void,
 ) {
-  const size = { width: 220, height: 168 };
+  const size = { width: 340, height: 420 };
   const area = screen.getPrimaryDisplay().workArea;
   const pet = new BrowserWindow({
     ...size,
@@ -29,7 +29,8 @@ export function createPet(
     frame: false,
     hasShadow: false,
     resizable: false,
-    focusable: false,
+    focusable: true,
+    show: false,
     alwaysOnTop: true,
     skipTaskbar: true,
     webPreferences: {
@@ -37,8 +38,10 @@ export function createPet(
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
+  pet.once("ready-to-show", () => pet.showInactive());
   pet.setIgnoreMouseEvents(true, { forward: true });
   pet.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   pet.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -46,17 +49,19 @@ export function createPet(
   void pet.loadFile(path.join(__dirname, "index.html"), {
     query: { pet: "true" },
   });
+  let bubble: PetBubble | undefined;
   let state = "Ready",
     detail = "Hold Control–Shift to talk. Right-click the seal for its menu.";
-  let roaming = true,
+  let roaming = false,
     hovered = false,
     dragging = false,
     direction = -1;
   let tray: Tray;
   const showState = (value: string, message?: string) => {
     state = value;
-    if (message) detail = message;
+    detail = message || "";
     pet.webContents.send("pet-state", state);
+    pet.webContents.send("pet-detail", detail);
     tray?.setToolTip(`teachMe: ${message || state}`);
   };
   const clamp = () => {
@@ -71,9 +76,12 @@ export function createPet(
   controls.webContents.once("did-finish-load", () => voice.restore());
   const cancel = () => {
     voice.cancel();
+    bubble = undefined;
+    pet.webContents.send("pet-bubble", null);
     showState("Ready");
   };
-  const openControls = () => {
+  const openFiles = () => {
+    controls.webContents.send("show-course-files");
     controls.show();
     controls.focus();
   };
@@ -93,19 +101,11 @@ export function createPet(
         click: () => {
           roaming = false;
           const p = screen.getCursorScreenPoint();
-          pet.setPosition(p.x - 110, p.y - 84);
+          pet.setPosition(p.x - size.width / 2, p.y - size.height + 84);
           clamp();
         },
       },
-      {
-        label: "Use my screen for next question",
-        type: "checkbox",
-        checked: useScreenOnce(),
-        click: (item) => {
-          useScreenOnce(item.checked);
-        },
-      },
-      { label: "Teaching controls…", click: openControls },
+      { label: "Eat my files…", click: openFiles },
       { label: "Enable voice permissions…", click: () => void voice.enable() },
       {
         label: "Status…",
@@ -137,10 +137,47 @@ export function createPet(
       Number.isFinite(value)
     )
       pet.webContents.send("pet-level", Math.max(0, Math.min(1, value)));
-    if (command === "close-controls" && !isPet) controls.hide();
-    if (command === "show-controls" && !isPet) controls.showInactive();
+    if (command === "close-files" && !isPet) controls.hide();
+    if (command === "bubble" && !isPet && value && typeof value === "object") {
+      const next = value as PetBubble;
+      if (
+        !Number.isSafeInteger(next.operation) ||
+        typeof next.status !== "string" ||
+        typeof next.text !== "string"
+      )
+        return;
+      bubble = next;
+      showState(next.error ? "Error" : next.status, next.error);
+      pet.webContents.send("pet-bubble", bubble);
+    }
+    if (
+      command === "bubble-action" &&
+      isPet &&
+      value &&
+      typeof value === "object"
+    ) {
+      const intent = value as {
+        action?: string;
+        operation?: number;
+        safeScreen?: boolean;
+        url?: string;
+      };
+      if (intent.action === "end") {
+        cancel();
+        return;
+      }
+      if (
+        intent.operation !== bubble?.operation ||
+        !["continue", "manual", "check", "source"].includes(intent.action || "")
+      )
+        return;
+      controls.webContents.send("teacher-bubble-action", intent);
+    }
     if (!isPet) return;
-    if (command === "ready") showState(state);
+    if (command === "ready") {
+      showState(state, detail);
+      pet.webContents.send("pet-bubble", bubble || null);
+    }
     if (command === "menu") menu().popup({ window: pet });
     if (command === "hover" && typeof value === "boolean") {
       hovered = value;
@@ -169,7 +206,8 @@ export function createPet(
       !roaming ||
       hovered ||
       dragging ||
-      state !== "Ready"
+      state !== "Ready" ||
+      !!bubble?.text
     )
       return;
     const b = pet.getBounds(),

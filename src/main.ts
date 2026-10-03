@@ -50,6 +50,9 @@ let checkAbort = new AbortController();
 let autoCheckTimer: ReturnType<typeof setTimeout> | undefined;
 let automaticChecks = 0;
 let requestAutomaticCheck: (followup?: boolean) => void = () => {};
+function resumeAutomaticCheck() {
+  if (actionGate?.resume()) requestAutomaticCheck();
+}
 
 let coordinatesInvalid = false;
 let referencePixels: ScreenPixels | undefined;
@@ -280,12 +283,13 @@ app.whenReady().then(() => {
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   controls = new BrowserWindow({
     show: false,
-    width: 390,
-    height: Math.min(420, display.workArea.height - 60),
+    width: 440,
+    height: Math.min(530, display.workArea.height - 60),
+    title: "Eat my files",
     minWidth: 340,
     minHeight: 360,
     backgroundColor: "#f2f6f5",
-    x: display.workArea.x + display.workArea.width - 410,
+    x: display.workArea.x + display.workArea.width - 460,
     y: display.workArea.y + 30,
     alwaysOnTop: true,
     webPreferences: preferences,
@@ -307,6 +311,7 @@ app.whenReady().then(() => {
   controls.on("close", (event) => {
     if (!quitting) {
       event.preventDefault();
+      pet.cancel();
       controls.hide();
     }
   });
@@ -395,16 +400,6 @@ app.whenReady().then(() => {
       throw new Error(
         "Enable voice permissions from the seal menu before using screen annotations, so input can clear stale marks.",
       );
-    controls.webContents.send(
-      "teacher-progress",
-      "Checking whether web research is needed",
-    );
-    const research = await researchQuestion(
-      request.question,
-      lessonModel(),
-      signal,
-    );
-    if (id !== turn) throw new Error("Cancelled");
     const needsScreen = route.context === "screenshot";
     let image: string | undefined;
     let capturedAt = Date.now();
@@ -429,6 +424,16 @@ app.whenReady().then(() => {
       image = encodeScreen(source.thumbnail, 1024 * 1024);
       capturedAt = Date.now();
     }
+    controls.webContents.send(
+      "teacher-progress",
+      "Checking whether web research is needed",
+    );
+    const research = await researchQuestion(
+      request.question,
+      lessonModel(),
+      signal,
+    );
+    if (id !== turn) throw new Error("Cancelled");
     overlay.setBounds(lessonDisplay.bounds);
     overlay.showInactive();
     if (id !== turn) throw new Error("Cancelled");
@@ -534,17 +539,16 @@ app.whenReady().then(() => {
       )
         return;
       scheduleScrollTracking();
-      requestAutomaticCheck();
+      resumeAutomaticCheck();
       return;
     }
     if (actionGate) {
       // Input makes old coordinates unsafe, but does not stop the voice.
       invalidateAction();
       if (
-        kind === "switch" ||
-        (point &&
-          lessonDisplay &&
-          screen.getDisplayNearestPoint(point).id !== lessonDisplay.id)
+        point &&
+        lessonDisplay &&
+        screen.getDisplayNearestPoint(point).id !== lessonDisplay.id
       ) {
         actionGate.armed = false;
         controls.webContents.send("teacher-check-state", {
@@ -552,7 +556,8 @@ app.whenReady().then(() => {
           index: actionGate.step,
           complete: false,
           checking: false,
-          message: "Screen context changed. Automatic checking paused.",
+          message:
+            "Return to the lesson display to resume checking, or choose I’ve done it.",
         });
       } else if (point) {
         const controlBounds = controls.getBounds();
@@ -562,9 +567,12 @@ app.whenReady().then(() => {
           point.x <= controlBounds.x + controlBounds.width &&
           point.y >= controlBounds.y &&
           point.y <= controlBounds.y + controlBounds.height;
-        if (!inControls) requestAutomaticCheck();
-      } else if (kind === "typing" && !controls.isFocused()) {
-        requestAutomaticCheck();
+        if (!inControls) resumeAutomaticCheck();
+      } else if (
+        (kind === "typing" || kind === "switch") &&
+        !controls.isFocused()
+      ) {
+        resumeAutomaticCheck();
       }
       return;
     }
@@ -732,7 +740,7 @@ app.whenReady().then(() => {
       return {
         complete: false,
         message:
-          "Use Done manually. Screen verification is unavailable or this step contains sensitive information.",
+          "Choose I’ve done it. Screen verification is unavailable or this step contains sensitive information.",
       };
     if (
       process.platform === "darwin" &&
@@ -740,14 +748,14 @@ app.whenReady().then(() => {
     )
       return {
         complete: false,
-        message: "Screen permission is unavailable. Use Done manually.",
+        message: "Screen permission is unavailable. Choose I’ve done it.",
       };
     const revision = gate.begin();
     if (revision === undefined)
       return {
         complete: false,
         message:
-          "Wait a few seconds before checking again. After five checks, use Done manually or ask a new question.",
+          "Wait a few seconds before checking again. After five checks, choose I’ve done it or ask a new question.",
       };
     checkAbort.abort();
     checkAbort = new AbortController();
@@ -778,10 +786,10 @@ app.whenReady().then(() => {
         message: complete
           ? "Screen verified."
           : result === "wrong-app"
-            ? "Return to the intended app, then check again."
+            ? "Return to the intended app. Your next interaction will check again."
             : result === "incomplete"
               ? "Waiting for the expected result to appear."
-              : "I cannot confirm the result. Check the expected state or use Done manually.",
+              : "I cannot confirm the result yet. Interact with the app to retry, or choose I’ve done it.",
       };
     } catch {
       gate.finish(revision, "ambiguous");
@@ -789,7 +797,7 @@ app.whenReady().then(() => {
       return {
         complete: false,
         message:
-          "Verification unavailable or screen changed. Check again or use Done manually.",
+          "Verification unavailable or screen changed. Check again or choose I’ve done it.",
       };
     } finally {
       if (id === turn) {
@@ -830,7 +838,7 @@ app.whenReady().then(() => {
         if (gate !== actionGate || id !== turn) return;
         if (!result.complete && (!gate.canWatch() || automaticChecks >= 20))
           result.message +=
-            " Automatic checks are paused. Fallback controls are available.";
+            " Automatic checks are paused. Choose I’ve done it in the seal bubble.";
         controls.webContents.send("teacher-check-state", {
           turn: id,
           index: gate.step,
@@ -866,7 +874,7 @@ app.whenReady().then(() => {
         complete: false,
         checking: false,
         message:
-          "Automatic checking paused after two minutes. Fallback controls are available.",
+          "Automatic checking paused after two minutes. Choose I’ve done it in the seal bubble.",
       });
     }, 120_000);
     requestAutomaticCheck();
@@ -887,7 +895,11 @@ app.whenReady().then(() => {
     await shell.openExternal(url);
   });
   ipcMain.handle("action", (event, action: unknown) => {
-    authorize(event);
+    if (
+      ![controls.webContents, overlay.webContents].includes(event.sender) ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error("Invalid sender");
     if (action !== "clear") throw new Error("Invalid action");
     pet.cancel();
   });

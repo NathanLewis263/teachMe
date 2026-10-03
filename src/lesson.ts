@@ -19,6 +19,8 @@ export const ink = {
   violet: "#c2adff",
   white: "#f1f5f4",
 } as const;
+// The blackboard and desktop annotations share bright, readable chalk colors.
+export const boardInk = ink;
 export type Ink = keyof typeof ink;
 export type LessonTable = { columns: string[]; rows: string[][] };
 export type LessonStep = {

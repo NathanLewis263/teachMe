@@ -28,16 +28,18 @@ On this Mac, add `/usr/local/bin` to your PATH if Node or npm isn't found.
 ## Using it
 
 - Hold Control + Shift anywhere to record. Release either key to ask. Very short taps are ignored, and recording stops after 60 seconds.
-- Drag the seal to move it. Right-click it, or use its menu bar icon, to turn wandering off or open Teaching controls.
+- Drag the seal to move it. Right-click it, or use its menu bar icon, to enable wandering or open Eat my files. Wandering is off by default.
 - Automatic routing chooses question-only or screenshot, separately from no drawing, whiteboard, screen annotations, or both. A screenshot can lead to a whiteboard explanation.
-- Use the seal menu’s **Use my screen for next question** override, or choose context and drawing in Teaching controls → Settings. Explicit instructions in your question take priority. Set both choices manually to work without Jev.
-- Choose a display in Settings. With Display under pointer, voice questions use the display under the pointer when Control–Shift is pressed. Typed questions use the display under the pointer when submitted.
+- Screen-reading instructions ignore teachMe’s own seal, bubble, board and windows unless your question explicitly asks about them. Screenshots are not redacted.
+- Context and drawing are always chosen automatically. Explicit instructions in your question take priority.
+- Voice questions use the display under the pointer when Control–Shift is pressed.
 - Ambiguous or low-confidence routing defaults to a screenshot and both drawing options. Explicit context and drawing restrictions still apply. A routing service failure stops before capture.
-- Under Settings → Course files, choose a folder of PDFs, slides, docs, notes or code. Supported files in its subfolders are uploaded too. The lesson model searches the index when useful. Re-choose the folder after changing its files.
-- Drag the whiteboard by its title bar. Previous and Next only change the visible slide. Speech and lesson generation keep going.
-- Stop & clear cancels recording, requests and playback. Command/Ctrl + Shift + Escape does the same.
+- Choose **Eat my files…** from the seal or menu bar icon, then choose a folder of PDFs, slides, docs, notes or code. Supported files in its subfolders are uploaded too. The lesson model searches the index when useful. Re-choose the folder after changing its files.
+- Drag the blackboard by its title bar. Previous and Next only change the visible slide. Speech and lesson generation keep going.
+- End lesson on the board, the bubble’s close button, and Stop & clear in the seal menu cancel recording, requests and playback and clear annotations. Command/Ctrl + Shift + Escape does the same. Plain Escape is not mapped.
+- A small bubble above the seal shows listening, thinking, planning and narration as lesson steps arrive. Continue and checkpoint fallback actions appear there only when needed. There is no Teaching controls pane.
 
-A slide appears when its speech starts. If speech isn't configured or fails, use Continue in the controls to read through the lesson. If generation stops early, the valid slides already received stay available.
+A slide appears when its speech starts. If speech isn't configured or fails, use Continue in the seal bubble to read through the lesson. If generation stops early, the valid slides already received stay available.
 
 ## macOS permissions
 
@@ -53,11 +55,11 @@ Lessons stream as validated JSON. The model cannot run code or control your apps
 
 Diagrams are generated schematics. Complex anatomy can still look wrong, so use a clear labeled reference on screen when detail matters. Small screen text can be hard to read after compression. Course search returns up to five passages per search, and course files are capped at 500 per folder and 50 MB each. Ask another question to continue a topic.
 
-Action checkpoints pause after narration while you perform the action. For non-sensitive steps, input triggers bounded screenshot verification, up to five checks per checkpoint and 20 automatic checks per turn, with a two-minute watch window. Sensitive or uncertain steps use the fallback controls. The app never clicks for you.
+Action checkpoints pause after narration while you perform the action. For non-sensitive steps, input triggers bounded screenshot verification, up to five checks per checkpoint and 20 automatic checks per turn, with a two-minute watch window. Sensitive steps use manual confirmation. After an uncertain result, another interaction retries within the same limits. App switching no longer leaves checking permanently paused. I’ve done it is available directly in the seal bubble. The app never clicks for you.
 
-Before a lesson, OpenAI checks whether the question needs public web research. That request receives only the question, with at most two search tool calls. It does not receive screenshots or lesson history. Verified sources appear as clickable links.
+Before a lesson, OpenAI checks whether the question needs public web research, using only the question and at most two search tool calls. Screenshots and lesson history are not sent to research. App-layout research is disabled by default; it runs only if explicitly requested. App guidance uses the lesson screenshot to identify the app and visible controls. Verified sources appear as clickable links. Research, lesson planning and checkpoint verification use medium reasoning.
 
-Course removal and replacement attempt remote cleanup. Failed cleanup can leave remote files behind even after the app forgets the course. Failed uploads can also leave files in OpenAI; this merge does not change that existing behavior.
+Course removal retains the saved reference when remote cleanup fails, so Remove can be retried. Replacement cleanup and partial uploads remain best-effort and can leave files in OpenAI; this UI update does not resolve those broader cleanup paths.
 
 ## Architecture
 

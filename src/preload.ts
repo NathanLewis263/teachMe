@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld("teachMe", {
     if (
       ![
         "pet-state",
+        "pet-detail",
+        "pet-bubble",
+        "teacher-bubble-action",
+        "show-course-files",
         "pet-level",
         "pet-direction",
         "voice-hold",

@@ -51,12 +51,12 @@
   position: fixed;
   left: 40px;
   top: 12vh;
-  width: min(680px, calc(100vw - 490px));
+  width: min(680px, calc(100vw - 48px));
   max-height: 82vh;
   color: #f1f5f4;
-  background: #14282ff5;
+  background: #14282f;
   border: 1px solid #a9d8ce28;
-  border-radius: 22px;
+  border-radius: 18px;
   box-shadow:
     0 22px 70px #05192030,
     0 2px 8px #05192018;
@@ -71,6 +71,7 @@
   gap: 16px;
   padding: 23px 28px 18px;
   border-bottom: 1px solid #ffffff0d;
+  background: #14282f;
 }
 .lesson-heading h2 {
   margin: 0;
@@ -149,7 +150,7 @@
 .lesson-table th {
   color: #83e8cb;
   font-weight: 600;
-  background: #ffffff05;
+  background: #ffffff08;
 }
 .lesson-table tbody tr:nth-child(even) {
   background: #ffffff03;
@@ -203,7 +204,7 @@ summary:focus-visible {
 @media (max-width: 900px) {
   .lesson-board {
     left: 20px;
-    width: calc(100vw - 440px);
+    width: min(680px, calc(100vw - 40px));
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -382,7 +383,7 @@ textarea {
   margin-top: 8px;
 }
 .question-actions > span {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
 }
 .ask-button {
@@ -478,10 +479,9 @@ body {
   margin: 0;
 }
 .pet-stage {
-  width: 220px;
-  height: 168px;
-  display: grid;
-  place-items: center;
+  width: 340px;
+  height: 420px;
+  position: relative;
   overflow: hidden;
   user-select: none;
 }
@@ -494,6 +494,11 @@ body {
 .pet-hit:active {
   cursor: grabbing;
 }
+.pet-stage .pet-hit {
+  position: absolute;
+  bottom: 18px;
+  left: 75px;
+}
 .pet-stage .seal {
   width: 190px;
   height: 133px;
@@ -503,7 +508,7 @@ body {
   transform-origin: 85px 98px;
   animation: pet-breathe 3.5s ease-in-out infinite;
 }
-.pet-listening {
+.pet-listening .pet-hit {
   filter: drop-shadow(0 0 7px #57efb9);
 }
 .pet-listening .seal-head {
@@ -513,19 +518,19 @@ body {
 .pet-listening .seal-wobble {
   animation: pet-breathe 0.8s ease-in-out infinite;
 }
-.pet-thinking,
-.pet-planning,
-.pet-preparing-voice {
+.pet-thinking .pet-hit,
+.pet-planning .pet-hit,
+.pet-preparing-voice .pet-hit {
   filter: drop-shadow(0 0 6px #ffc56f);
   animation: pet-think 1.2s ease-in-out infinite;
 }
-.pet-capturing {
+.pet-capturing .pet-hit {
   filter: drop-shadow(0 0 12px #ffffff);
 }
-.pet-speaking {
+.pet-speaking .pet-hit {
   filter: drop-shadow(0 0 6px #79c7ff);
 }
-.pet-error {
+.pet-error .pet-hit {
   filter: drop-shadow(0 0 7px #ef866f);
 }
 @keyframes pet-breathe {
@@ -552,7 +557,7 @@ body {
   pointer-events: visiblePainted;
 }
 
-.pet-connecting {
+.pet-connecting .pet-hit {
   filter: drop-shadow(0 0 7px #ffc56f);
 }
 .pet-listening .seal {
@@ -602,7 +607,7 @@ body {
   justify-content: space-between;
   gap: 12px;
   padding: 0 28px 14px;
-  color: #bfd0d3;
+  color: #b3c9cf;
   font-size: 12px;
 }
 .board-navigation button {
@@ -694,4 +699,247 @@ body {
 }
 .board-compact .lesson-sources {
   display: none;
+}
+
+/* A quiet control surface beside the dark teaching canvas. */
+[hidden] {
+  display: none !important;
+}
+.teacher-shell {
+  min-height: 100vh;
+}
+.controls-navigation {
+  display: flex;
+  gap: 4px;
+  margin: 20px 0;
+  padding: 4px;
+  background: #e3ece9;
+  border-radius: 10px;
+}
+.controls-navigation button {
+  flex: 1;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+}
+.controls-navigation .selected {
+  color: var(--ink);
+  background: white;
+  box-shadow: 0 1px 3px #203c4014;
+  font-weight: 600;
+}
+.teacher-settings legend,
+.course-section h2,
+.checkpoint-panel h2 {
+  font-size: 15px;
+  font-weight: 650;
+  margin: 0 0 8px;
+  color: var(--ink);
+}
+.teacher-options .teacher-settings {
+  gap: 16px;
+  padding: 14px 0 22px;
+}
+.course-section {
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.course-section progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--accent);
+}
+.teacher-note {
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.teacher-footer {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+}
+.checkpoint-panel {
+  margin-top: 18px;
+  padding: 18px;
+  background: #e3eeea;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.checkpoint-panel p {
+  margin: 8px 0;
+}
+.checkpoint-panel .quiet-button {
+  margin: 8px 6px 0 0;
+}
+.board-end {
+  flex-shrink: 0;
+  border: 1px solid #a9d8ce40;
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: transparent;
+  color: #f1f5f4;
+  font-size: 12px;
+}
+.board-end:hover {
+  background: #ffffff16;
+}
+.lesson-heading h2 {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.lesson-heading {
+  padding: 18px 24px;
+}
+.lesson-notes p {
+  font-size: 16px;
+  line-height: 1.75;
+  max-width: 70ch;
+}
+.board-compact {
+  width: 360px;
+  max-width: calc(100vw - 40px);
+}
+.lesson-board {
+  --scroll-track: #14282f;
+  --scroll-thumb: #58797e;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+
+/* Only the speech bubble and painted seal receive desktop clicks. */
+.pet-bubble {
+  position: absolute;
+  bottom: 160px;
+  left: 12px;
+  right: 12px;
+  max-height: 244px;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid #cedbd7;
+  border-radius: 16px 16px 16px 5px;
+  background: #fffffff7;
+  color: var(--ink);
+  box-shadow: 0 4px 18px #203c401a;
+  user-select: text;
+  font:
+    13px/1.55 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+.pet-bubble header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.bubble-status {
+  font-weight: 650;
+  color: var(--accent);
+}
+.pet-bubble button {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 9px;
+  background: #f3f7f5;
+  color: var(--ink);
+  font: inherit;
+}
+.pet-bubble button:hover:not(:disabled) {
+  background: #e4eeea;
+}
+.pet-bubble header button {
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  padding: 0 4px;
+  line-height: 24px;
+}
+.bubble-transcript {
+  margin: 8px 0 2px;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bubble-help {
+  color: var(--muted);
+  margin: 7px 0 0;
+  font-size: 12px;
+}
+.bubble-error {
+  color: #924026;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.bubble-checkpoint {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.bubble-checkpoint p {
+  margin: 6px 0;
+}
+.bubble-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.pet-bubble .bubble-continue {
+  margin-top: 10px;
+  background: var(--accent);
+  color: white;
+}
+.bubble-sources {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.bubble-sources button {
+  display: block;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 4px 0;
+  text-decoration: underline;
+}
+.files-window {
+  min-height: 100vh;
+  padding: 24px;
+  color: var(--ink);
+  background: var(--paper);
+  font:
+    14px/1.6 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+.files-window header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.files-window h1 {
+  margin: 0;
+  font-size: 23px;
+  letter-spacing: -0.6px;
+  font-weight: 700;
+}
+.files-window > p {
+  margin: 16px 0;
+}
+.file-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.course-summary {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+  margin: 12px 0;
 }

@@ -67,32 +67,54 @@ export function layoutLabels(
   height: number,
 ): LabelBox[] {
   const labels: LabelBox[] = [];
-  const intersects = (a: LabelBox, b: LabelBox) =>
+  const gap = 12;
+  const intersects = (
+    a: { x: number; y: number; width: number; height: number },
+    b: { x: number; y: number; width: number; height: number },
+  ) =>
     a.x < b.x + b.width + 8 &&
     a.x + a.width + 8 > b.x &&
     a.y < b.y + b.height + 8 &&
     a.y + a.height + 8 > b.y;
+  const targets = annotations.map((a) => ({
+    x: a.x * width,
+    y: a.y * height,
+    width: a.width * width,
+    height: a.height * height,
+  }));
   annotations.forEach((a, index) => {
     if (!a.label) return;
     const text = a.label.length > 30 ? a.label.slice(0, 29) + "…" : a.label;
     const w = Math.min(width - 24, text.length * 7.8 + 24),
       h = 30;
-    const x = Math.max(12, Math.min(width - w - 12, a.x * width));
-    const desiredY = Math.min(height - h - 12, (a.y + a.height) * height + 12);
-    for (let offset = 0; offset < height; offset += 38) {
-      for (const direction of [1, -1]) {
-        const y = desiredY + offset * direction;
-        const candidate = { x, y, width: w, height: h, text, index };
-        if (
-          y >= 12 &&
-          y + h <= height - 12 &&
-          !labels.some((label) => intersects(candidate, label))
-        ) {
-          labels.push(candidate);
-          return;
-        }
-      }
-    }
+    const target = targets[index];
+    const left = Math.max(gap, Math.min(width - w - gap, target.x));
+    const right = Math.max(
+      gap,
+      Math.min(width - w - gap, target.x + target.width - w),
+    );
+    // Keep labels next to their target, with the empty space above preferred.
+    const positions = [
+      { x: left, y: target.y - h - gap },
+      { x: right, y: target.y - h - gap },
+      { x: left, y: target.y + target.height + gap },
+      { x: right, y: target.y + target.height + gap },
+      { x: target.x - w - gap, y: target.y },
+      { x: target.x + target.width + gap, y: target.y },
+    ];
+    const position = positions.find(({ x, y }) => {
+      const candidate = { x, y, width: w, height: h };
+      return (
+        x >= gap &&
+        x + w <= width - gap &&
+        y >= gap &&
+        y + h <= height - gap &&
+        !targets.some((target) => intersects(candidate, target)) &&
+        !labels.some((label) => intersects(candidate, label))
+      );
+    });
+    if (position)
+      labels.push({ ...position, width: w, height: h, text, index });
   });
   return labels;
 }

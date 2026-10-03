@@ -4,7 +4,13 @@ import { SceneView } from "./scene-view";
 import React, { useEffect, useRef, useState } from "react";
 import { validAnnotation, type Annotation } from "./contracts";
 import { annotationPath, layoutLabels } from "./drawing";
-import { ink, validLesson, type Lesson, type LessonFrame } from "./lesson";
+import {
+  ink,
+  boardInk,
+  validLesson,
+  type Lesson,
+  type LessonFrame,
+} from "./lesson";
 
 function Stroke({
   a,
@@ -128,7 +134,7 @@ function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
         .slice(Math.max(0, step - 5), step + 1)
         .map((item, index) => {
           const y = 16 + index * 65,
-            color = ink[colors[index]];
+            color = boardInk[colors[index]];
           return (
             <g
               key={index}
@@ -242,6 +248,9 @@ export function Overlay() {
     const clear = window.teachMe.subscribe("lesson-clear", () => {
       drag.current = null;
       setLesson(null);
+      setPosition(null);
+      setCompact(false);
+      setExpanded(false);
     });
     const frames = window.teachMe.subscribe("lesson", (value: LessonFrame) => {
       if (
@@ -284,12 +293,23 @@ export function Overlay() {
         height: boardBounds.height,
       };
     const viewport = lesson.viewport || { x: 0, y: 0, ...size };
-    const targets = lesson.annotations.filter(validAnnotation).map((a) => ({
+    const annotations = lesson.annotations.filter(validAnnotation);
+    const targets = annotations.map((a) => ({
       x: viewport.x + a.x * viewport.width - 16,
       y: viewport.y + a.y * viewport.height - 16,
       width: a.width * viewport.width + 32,
-      height: a.height * viewport.height + (a.label ? 72 : 32),
+      height: a.height * viewport.height + 32,
     }));
+    targets.push(
+      ...layoutLabels(annotations, viewport.width, viewport.height).map(
+        (label) => ({
+          x: viewport.x + label.x - 8,
+          y: viewport.y + label.y - 8,
+          width: label.width + 16,
+          height: label.height + 16,
+        }),
+      ),
+    );
     const full = placeBoard(
       { x: boardBounds.x, y: boardBounds.y, ...fullBoardSize.current },
       viewport,
@@ -298,7 +318,12 @@ export function Overlay() {
     const shouldCompact = full.blocked && !expanded;
     const next = shouldCompact
       ? placeBoard(
-          { x: boardBounds.x, y: boardBounds.y, width: 220, height: 56 },
+          {
+            x: boardBounds.x,
+            y: boardBounds.y,
+            width: Math.min(360, viewport.width - 40),
+            height: 56,
+          },
           viewport,
           targets,
         )
@@ -383,6 +408,14 @@ export function Overlay() {
               }}
             >
               <h2>{lesson.lesson.title}</h2>
+              <button
+                className="board-end"
+                title="Stop audio and clear this lesson"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => void window.teachMe.action("clear")}
+              >
+                End lesson
+              </button>
               {compact && (
                 <button
                   className="board-expand"
@@ -419,7 +452,7 @@ export function Overlay() {
                 ← Previous
               </button>
               <span>
-                {lesson.step + 1} / {lesson.lesson.steps.length}
+                Slide {lesson.step + 1} of {lesson.lesson.steps.length}
               </span>
               <button
                 onClick={() => browse(lesson.step + 1)}

@@ -1,7 +1,7 @@
 // Animate the scene for the visible step; shapes and arrows share a clock so they stay together.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationPath } from "./drawing";
-import { ink, type Lesson } from "./lesson";
+import { boardInk as ink, type Lesson } from "./lesson";
 import {
   linkPoints,
   sceneLabels,

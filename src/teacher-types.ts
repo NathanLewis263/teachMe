@@ -61,3 +61,18 @@ export interface AppBridge {
   ): Promise<{ done: boolean; audio?: Uint8Array }>;
   stopSpeech(turn: number): Promise<void>;
 }
+
+export type PetBubble = {
+  operation: number;
+  step: number;
+  status: string;
+  error?: string;
+  text: string;
+  busy: boolean;
+  waiting: boolean;
+  checking: boolean;
+  checkpoint?: import("./action-checkpoint").ActionCheckpoint;
+  turn?: number;
+  sources: NonNullable<Lesson["sources"]>;
+  researchUnavailable?: boolean;
+};

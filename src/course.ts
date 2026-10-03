@@ -26,13 +26,18 @@ export async function loadCourse(): Promise<Course | undefined> {
   }
 }
 
-async function removeStore(client: OpenAI, id: string) {
+async function removeStore(client: OpenAI, id: string, strict = false) {
   try {
     for await (const file of client.vectorStores.files.list(id))
-      await client.files.delete(file.id).catch(() => {});
+      await client.files.delete(file.id).catch((error) => {
+        if (strict && error?.status !== 404) throw error;
+      });
     await client.vectorStores.delete(id);
-  } catch {
-    // Already gone, or offline. Nothing local depends on it.
+  } catch (error) {
+    if (strict && (error as { status?: number })?.status !== 404)
+      throw new Error(
+        "Course removal did not finish. Its saved reference is kept so you can retry Remove.",
+      );
   }
 }
 
@@ -97,6 +102,8 @@ export async function indexCourse(folder: string): Promise<void> {
 export async function removeCourse(): Promise<void> {
   const course = await loadCourse();
   if (!course) return;
+  if (indexing)
+    throw new Error("Wait for course indexing to finish before removing it.");
+  await removeStore(openaiClient(), course.vectorStoreId, true);
   await rm(statePath(), { force: true });
-  await removeStore(openaiClient(), course.vectorStoreId);
 }

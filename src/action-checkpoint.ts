@@ -25,9 +25,22 @@ export class ActionGate {
   watchUntil = 0;
   // Controls arm this after narration, so we do not check before the student can act.
   arm(now = Date.now()) {
-    if (this.armed || this.confirmed) return;
+    if (this.watchUntil || this.confirmed) return;
     this.armed = true;
     this.watchUntil = now + 120_000;
+  }
+  // A new interaction can retry a paused check without resetting its budget.
+  resume(now = Date.now()) {
+    if (
+      !this.watchUntil ||
+      now >= this.watchUntil ||
+      this.action.sensitive ||
+      this.confirmed ||
+      this.attempts >= 5
+    )
+      return false;
+    this.armed = true;
+    return true;
   }
   canWatch(now = Date.now()) {
     return (
