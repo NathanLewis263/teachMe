@@ -1,4 +1,4 @@
-// Track the chosen chord only; never retain other key codes or typed text.
+// Track just the shortcut; after cancel, wait for release before allowing another recording.
 export class HoldGate {
   held = false;
   blocked = false;

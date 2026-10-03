@@ -626,3 +626,72 @@ body {
 .lesson-progress {
   flex-shrink: 0;
 }
+
+.screen-caption {
+  width: min(360px, calc(100vw - 48px));
+  max-height: 55vh;
+}
+.screen-caption .lesson-heading {
+  padding: 12px 16px;
+}
+.screen-caption .lesson-heading h2 {
+  font-size: 14px;
+}
+.screen-caption .lesson-notes {
+  padding: 12px 16px;
+}
+.screen-caption .lesson-notes h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.screen-caption .lesson-notes p {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.board-compact {
+  width: 220px;
+  height: 56px;
+}
+.board-compact .lesson-heading {
+  padding: 10px 12px;
+  height: 56px;
+  box-sizing: border-box;
+}
+.board-compact .lesson-heading h2 {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-compact .board-content,
+.board-compact .board-navigation,
+.board-compact .lesson-progress {
+  display: none;
+}
+.board-expand {
+  flex-shrink: 0;
+  color: #83e8cb;
+  background: transparent;
+  border: 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lesson-sources {
+  padding: 8px 20px;
+  font-size: 12px;
+  max-height: 120px;
+  overflow: auto;
+}
+.lesson-sources button {
+  background: transparent;
+  border: 0;
+  color: #83e8cb;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.board-compact .lesson-sources {
+  display: none;
+}

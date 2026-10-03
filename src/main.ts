@@ -1,3 +1,15 @@
+// Main owns the windows and provider calls; controls decide when each step is shown.
+import { researchQuestion, publicSourceUrl } from "./web-research";
+import { trackAnnotation, type ScreenPixels } from "./annotation-tracking";
+import { ActionGate } from "./action-checkpoint";
+import { routeQuestion } from "./routing";
+import {
+  clearDisplay,
+  takeDisplay,
+  takeScreenOverride,
+  onScreenInput,
+  hasInputGuard,
+} from "./screen-state";
 import { createPet } from "./pet-desktop";
 import {
   app,
@@ -8,6 +20,7 @@ import {
   desktopCapturer,
   systemPreferences,
   globalShortcut,
+  shell,
 } from "electron";
 import path from "node:path";
 import { encodeScreen } from "./capture";
@@ -20,11 +33,132 @@ if (existsSync(envPath)) process.loadEnvFile(envPath);
 
 import { applyDrawingStep, type Lesson } from "./lesson";
 
-import { speechModel, planLesson } from "./providers";
+import {
+  speechModel,
+  lessonModel,
+  planLesson,
+  verifyAction,
+} from "./providers";
 import { speechChunks } from "./speech-stream";
 import type { LessonRequest } from "./teacher-types";
 let providerAbort = new AbortController();
 let screenTurn = false;
+let actionGate: ActionGate | undefined;
+let checkAbort = new AbortController();
+let autoCheckTimer: ReturnType<typeof setTimeout> | undefined;
+let automaticChecks = 0;
+let requestAutomaticCheck: (followup?: boolean) => void = () => {};
+
+let coordinatesInvalid = false;
+let referencePixels: ScreenPixels | undefined;
+let scrolledPixels: ScreenPixels | undefined;
+let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+let scrollRevision = 0;
+let scrollBusy = false;
+let scrollHidden = false;
+let scrollCaptures = 0;
+let lastScrollCapture = 0;
+async function captureDisplay(display: Electron.Display, width: number) {
+  const sources = await desktopCapturer.getSources({
+    types: ["screen"],
+    thumbnailSize: {
+      width,
+      height: Math.round((width * display.size.height) / display.size.width),
+    },
+  });
+  return sources.find((source) => source.display_id === String(display.id));
+}
+
+function screenPixels(image: Electron.NativeImage): ScreenPixels {
+  const resized = image.resize({ width: 800 });
+  return { ...resized.getSize(), data: resized.toBitmap() };
+}
+function clearTracking() {
+  clearTimeout(scrollTimer);
+  scrollRevision++;
+  referencePixels = undefined;
+  scrolledPixels = undefined;
+  scrollHidden = false;
+}
+function visibleAnnotations(): Annotation[] {
+  if (coordinatesInvalid || scrollHidden || !activeLesson) return [];
+  const marks =
+    viewedStep === undefined
+      ? lessonAnnotations
+      : activeLesson.steps
+          .slice(0, viewedStep + 1)
+          .reduce(applyDrawingStep, [] as Annotation[]);
+  const beforeScroll = referencePixels;
+  const afterScroll = scrolledPixels;
+  if (!beforeScroll || !afterScroll) return marks;
+  return marks.flatMap((mark) => {
+    const tracked = trackAnnotation(mark, beforeScroll, afterScroll);
+    return tracked ? [tracked] : [];
+  });
+}
+function scheduleScrollTracking() {
+  actionGate?.invalidate();
+  checkAbort.abort();
+  clearTimeout(scrollTimer);
+  const revision = ++scrollRevision;
+  scrollHidden = true;
+  publishLesson();
+  if (
+    !referencePixels ||
+    coordinatesInvalid ||
+    actionGate?.action.sensitive ||
+    scrollCaptures >= 30 ||
+    Date.now() > screenDeadline
+  )
+    return;
+  const id = turn;
+  scrollTimer = setTimeout(
+    async () => {
+      if (
+        id !== turn ||
+        revision !== scrollRevision ||
+        scrollBusy ||
+        !lessonDisplay
+      )
+        return;
+      scrollBusy = true;
+      scrollCaptures++;
+      lastScrollCapture = Date.now();
+      overlay.hide();
+      try {
+        const display = lessonDisplay;
+        const source = await captureDisplay(display, 800);
+        if (id !== turn || revision !== scrollRevision) return;
+        if (!source || source.thumbnail.isEmpty()) return;
+        scrolledPixels = screenPixels(source.thumbnail);
+        scrollHidden = false;
+      } catch {
+        // Unavailable or ambiguous targets remain hidden.
+      } finally {
+        scrollBusy = false;
+        if (id === turn) {
+          overlay.showInactive();
+          publishLesson();
+        }
+      }
+    },
+    Math.max(350, 1000 - (Date.now() - lastScrollCapture)),
+  );
+}
+
+// Hide stale marks and discard old screen checks, but keep narration running.
+function invalidateAction() {
+  clearTimeout(autoCheckTimer);
+  clearTracking();
+  actionGate?.invalidate();
+  checkAbort.abort();
+  coordinatesInvalid = true;
+  lessonAnnotations = [];
+  publishLesson();
+}
+
+const recentConversation: string[] = [];
+let previousLesson = "";
 let viewedStep: number | undefined;
 let boardRegion: {
   x: number;
@@ -41,8 +175,18 @@ let speechAbort = new AbortController();
 let speech:
   | { index: number; chunks: AsyncGenerator<Uint8Array>; pulling: boolean }
   | undefined;
-// A new turn invalidates late provider replies as well as visible marks.
-function cancelTeacher(notify = true) {
+// Abort pending work and bump the turn ID so late replies cannot restart an old lesson.
+function cancelTeacher(notify = true, forgetHistory = false) {
+  if (forgetHistory) {
+    previousLesson = "";
+    recentConversation.length = 0;
+  }
+  invalidateAction();
+  actionGate = undefined;
+  coordinatesInvalid = false;
+  scrollCaptures = 0;
+  automaticChecks = 0;
+  clearDisplay();
   providerAbort.abort();
   speechAbort.abort();
   void speech?.chunks.return(undefined).catch(() => {});
@@ -69,6 +213,13 @@ function publishLesson() {
   if (!activeLesson || lessonStep < 0 || !lessonDisplay) return;
   const content = overlay.getContentBounds();
   const target = lessonDisplay.bounds;
+  if (
+    screenTurn &&
+    Date.now() > screenDeadline &&
+    !actionGate &&
+    !coordinatesInvalid
+  )
+    return;
   overlay.webContents.send("lesson", {
     viewport: {
       x: target.x - content.x,
@@ -79,7 +230,7 @@ function publishLesson() {
     lesson: activeLesson,
     step: viewedStep ?? lessonStep,
     turn,
-    annotations: lessonAnnotations,
+    annotations: visibleAnnotations(),
   });
 }
 
@@ -157,7 +308,9 @@ app.whenReady().then(() => {
       controls.hide();
     }
   });
-  const pet = createPet(controls, cancelTeacher);
+  const pet = createPet(controls, (newQuestion = false) =>
+    cancelTeacher(true, !newQuestion),
+  );
   const authorize = (event: Electron.IpcMainInvokeEvent) => {
     if (
       event.sender !== controls.webContents ||
@@ -178,11 +331,12 @@ app.whenReady().then(() => {
   });
   ipcMain.handle("displays", (event) => {
     authorize(event);
-    return screen.getAllDisplays().map((d) => ({
-      id: d.id,
-      name: d.label || `Display ${d.id}`,
+    return screen.getAllDisplays().map((display) => ({
+      id: display.id,
+      name: display.label || `Display ${display.id}`,
     }));
   });
+  // Route before capturing; only the lesson request gets the screenshot.
   ipcMain.handle("teacher-plan", async (event, request: LessonRequest) => {
     authorize(event);
     if (
@@ -191,76 +345,104 @@ app.whenReady().then(() => {
       typeof request.question !== "string" ||
       !request.question.trim() ||
       request.question.length > 8000 ||
-      typeof request.includeScreen !== "boolean" ||
-      !["screen", "whiteboard"].includes(request.mode) ||
-      (request.mode === "screen" && !request.includeScreen)
+      !["auto", "none", "screenshot"].includes(request.context) ||
+      !["auto", "none", "screen", "whiteboard", "both"].includes(
+        request.mode,
+      ) ||
+      (request.voice !== undefined && typeof request.voice !== "boolean")
     )
       throw new Error("Invalid lesson request");
+    const heldDisplay = takeDisplay();
+    const displayId =
+      request.voice && request.displayId === 0
+        ? (heldDisplay ?? 0)
+        : request.displayId;
     const display =
-      request.displayId === 0
+      displayId === 0
         ? screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-        : screen.getAllDisplays().find((d) => d.id === request.displayId);
+        : screen.getAllDisplays().find((display) => display.id === displayId);
     if (!display) throw new Error("Select an available display.");
-    const previous = activeLesson
-      ? JSON.stringify(activeLesson).slice(0, 16000)
-      : "";
+    const screenOverride = takeScreenOverride();
+    const previous = previousLesson;
     cancelTeacher(false);
     const id = turn;
     const signal = providerAbort.signal;
-    // Electron bounds are logical pixels; the drawing layer uses screenshot fractions.
-    lessonDisplay = display;
-    overlay.setBounds(display.bounds);
-    overlay.showInactive();
+    controls.webContents.send("teacher-progress", "Choosing context");
+    const route = await routeQuestion(
+      request.question,
+      recentConversation,
+      {
+        context:
+          request.context !== "auto"
+            ? request.context
+            : screenOverride
+              ? "screenshot"
+              : undefined,
+        rendering: request.mode === "auto" ? undefined : request.mode,
+      },
+      signal,
+    );
+    if (id !== turn) throw new Error("Cancelled");
+    if (
+      (route.rendering === "screen" || route.rendering === "both") &&
+      !hasInputGuard()
+    )
+      throw new Error(
+        "Enable voice permissions from the seal menu before using screen annotations, so input can clear stale marks.",
+      );
     controls.webContents.send(
       "teacher-progress",
-      request.includeScreen ? "Capturing" : "Thinking",
+      "Checking whether web research is needed",
     );
-    const capturedAt = Date.now();
+    const research = await researchQuestion(
+      request.question,
+      lessonModel(),
+      signal,
+    );
+    if (id !== turn) throw new Error("Cancelled");
+    const needsScreen = route.context === "screenshot";
     let image: string | undefined;
-    if (request.includeScreen) {
+    let capturedAt = Date.now();
+    lessonDisplay = display;
+    if (needsScreen) {
       if (
         process.platform === "darwin" &&
-        systemPreferences.getMediaAccessStatus("screen") === "denied"
+        systemPreferences.getMediaAccessStatus("screen") !== "granted"
       )
         throw new Error(
-          "Enable Screen Recording for Electron in System Settings, then restart.",
+          "Grant Screen Recording to Electron/teachMe in System Settings, then restart. No capture was made.",
         );
-      // Keep the previous whiteboard out of the new reference image.
+      controls.webContents.send("teacher-progress", "Capturing display");
       overlay.hide();
-      try {
-        const sources = await desktopCapturer.getSources({
-          types: ["screen"],
-          thumbnailSize: {
-            width: 1600,
-            height: Math.round(
-              (1600 * display.size.height) / display.size.width,
-            ),
-          },
-        });
-        if (id !== turn) throw new Error("Cancelled");
-        const source = sources.find((s) => s.display_id === String(display.id));
-        if (!source || source.thumbnail.isEmpty())
-          throw new Error(
-            "Screen capture unavailable. Check Screen Recording permission.",
-          );
-        image = encodeScreen(source.thumbnail, 1024 * 1024);
-      } finally {
-        if (id === turn && !overlay.isDestroyed()) overlay.showInactive();
-      }
+      const source = await captureDisplay(display, 1600);
+      if (id !== turn) throw new Error("Cancelled");
+      if (!source || source.thumbnail.isEmpty())
+        throw new Error(
+          "Screen capture unavailable. Check Screen Recording permission.",
+        );
+      referencePixels = screenPixels(source.thumbnail);
+      image = encodeScreen(source.thumbnail, 1024 * 1024);
+      capturedAt = Date.now();
     }
+    overlay.setBounds(lessonDisplay.bounds);
+    overlay.showInactive();
     if (id !== turn) throw new Error("Cancelled");
     controls.webContents.send("teacher-progress", "Planning");
     lessonStep = -1;
     lessonAnnotations = [];
-    screenTurn = request.mode === "screen";
+    screenTurn = route.rendering === "screen" || route.rendering === "both";
     screenDeadline = capturedAt + 120_000;
     if (screenTurn)
       expiry = setTimeout(
-        cancelTeacher,
+        invalidateAction,
         Math.max(0, screenDeadline - Date.now()),
       );
     const result = await planLesson(
-      request,
+      {
+        ...request,
+        mode: route.rendering,
+        context: route.context,
+      },
       image,
       previous,
       signal,
@@ -274,8 +456,18 @@ app.whenReady().then(() => {
           lesson,
         });
       },
+      research,
     );
     if (id !== turn) throw new Error("Cancelled");
+    previousLesson = JSON.stringify(result.lesson).slice(0, 16000);
+    recentConversation.push(
+      `User: ${request.question.slice(0, 480)}`,
+      `Tutor: ${result.lesson.title}. ${result.lesson.steps.at(-1)?.say || ""}`.slice(
+        0,
+        500,
+      ),
+    );
+    recentConversation.splice(0, Math.max(0, recentConversation.length - 4));
     return { turn: id, ...result };
   });
   ipcMain.on("board-region", (event, region) => {
@@ -300,21 +492,77 @@ app.whenReady().then(() => {
       return;
     boardRegion = region;
   });
+  onScreenInput((point, kind) => {
+    if (!screenTurn && !actionGate) return;
+    const bounds = overlay.getBounds(),
+      region = boardRegion;
+    if (
+      point &&
+      region &&
+      point.x >= bounds.x + region.x &&
+      point.x <= bounds.x + region.x + region.width &&
+      point.y >= bounds.y + region.y &&
+      point.y <= bounds.y + region.y + region.height
+    )
+      return;
+    if (kind === "scroll") {
+      if (
+        point &&
+        lessonDisplay &&
+        screen.getDisplayNearestPoint(point).id !== lessonDisplay.id
+      )
+        return;
+      scheduleScrollTracking();
+      requestAutomaticCheck();
+      return;
+    }
+    if (actionGate) {
+      // Input makes old coordinates unsafe, but does not stop the voice.
+      invalidateAction();
+      if (
+        kind === "switch" ||
+        (point &&
+          lessonDisplay &&
+          screen.getDisplayNearestPoint(point).id !== lessonDisplay.id)
+      ) {
+        actionGate.armed = false;
+        controls.webContents.send("teacher-check-state", {
+          turn,
+          index: actionGate.step,
+          complete: false,
+          checking: false,
+          message: "Screen context changed. Automatic checking paused.",
+        });
+      } else if (point) {
+        const controlBounds = controls.getBounds();
+        const inControls =
+          controls.isVisible() &&
+          point.x >= controlBounds.x &&
+          point.x <= controlBounds.x + controlBounds.width &&
+          point.y >= controlBounds.y &&
+          point.y <= controlBounds.y + controlBounds.height;
+        if (!inControls) requestAutomaticCheck();
+      } else if (kind === "typing" && !controls.isFocused()) {
+        requestAutomaticCheck();
+      }
+      return;
+    }
+    invalidateAction();
+  });
   let interactive = false;
   const hitTest = setInterval(() => {
     if (overlay.isDestroyed()) return;
     const point = screen.getCursorScreenPoint();
     const bounds = overlay.getBounds();
-    const r = boardRegion;
+    const region = boardRegion;
     const inside =
-      !!r &&
+      !!region &&
       !!activeLesson &&
-      !screenTurn &&
-      (r.dragging ||
-        (point.x >= bounds.x + r.x &&
-          point.x <= bounds.x + r.x + r.width &&
-          point.y >= bounds.y + r.y &&
-          point.y <= bounds.y + r.y + r.height));
+      (region.dragging ||
+        (point.x >= bounds.x + region.x &&
+          point.x <= bounds.x + region.x + region.width &&
+          point.y >= bounds.y + region.y &&
+          point.y <= bounds.y + region.y + region.height));
     if (inside !== interactive) {
       interactive = inside;
       overlay.setIgnoreMouseEvents(!inside, { forward: true });
@@ -328,7 +576,6 @@ app.whenReady().then(() => {
       event.senderFrame !== event.sender.mainFrame ||
       id !== turn ||
       !activeLesson ||
-      screenTurn ||
       !Number.isInteger(index) ||
       index < 0 ||
       index >= activeLesson.steps.length
@@ -348,6 +595,8 @@ app.whenReady().then(() => {
     )
       throw new Error("Stale speech request");
     if (!speech) {
+      if (actionGate && !actionGate.confirmed)
+        throw new Error("Complete the current action first.");
       if (spoken.has(index) || index !== lessonStep + 1)
         throw new Error("Repeated speech request");
       spoken.add(index);
@@ -388,6 +637,7 @@ app.whenReady().then(() => {
     void speech?.chunks.return(undefined).catch(() => {});
     speech = undefined;
   });
+  // Reveal marks and create the action gate at playback time, not generation time.
   ipcMain.handle("teacher-step", (event, id: unknown, index: unknown) => {
     authorize(event);
     if (
@@ -398,21 +648,222 @@ app.whenReady().then(() => {
       index >= activeLesson.steps.length
     )
       return { ok: false, error: "Stale lesson step" };
-    if (screenTurn && Date.now() > screenDeadline) {
-      cancelTeacher();
-      return {
-        ok: false,
-        error: "Screenshot expired. Ask again for a fresh capture.",
-      };
+    if (actionGate && !actionGate.confirmed)
+      return { ok: false, error: "Complete the current action first." };
+    if (
+      screenTurn &&
+      Date.now() > screenDeadline &&
+      !actionGate &&
+      !coordinatesInvalid
+    ) {
+      invalidateAction();
     }
     overlay.showInactive();
     lessonStep = index;
-    lessonAnnotations = applyDrawingStep(
-      lessonAnnotations,
-      activeLesson.steps[index],
-    );
+    const checkpoint = activeLesson.steps[index].action;
+    actionGate = checkpoint
+      ? new ActionGate(turn, index, checkpoint)
+      : undefined;
+    if (actionGate) clearTimeout(expiry);
+    if (checkpoint?.sensitive) clearTracking();
+    lessonAnnotations = coordinatesInvalid
+      ? []
+      : applyDrawingStep(lessonAnnotations, activeLesson.steps[index]);
     publishLesson();
     return { ok: true };
+  });
+  async function checkAction(
+    id: number,
+    index: number,
+    method: string,
+    safeScreen: boolean,
+    automatic = false,
+  ) {
+    const gate = actionGate;
+    if (
+      !gate ||
+      gate.turn !== id ||
+      id !== turn ||
+      gate.step !== index ||
+      gate.confirmed
+    )
+      return {
+        complete: false,
+        message: "This action is no longer waiting.",
+      };
+    // Manual confirmation continues without a screenshot or a claim of verification.
+    if (method === "manual") {
+      checkAbort.abort();
+      gate.manual();
+      invalidateAction();
+      return {
+        complete: true,
+        message: "Confirmed by you. Screen was not verified.",
+      };
+    }
+    if (
+      method !== "check" ||
+      safeScreen !== true ||
+      gate.action.sensitive ||
+      !lessonDisplay ||
+      !hasInputGuard()
+    )
+      return {
+        complete: false,
+        message:
+          "Use Done manually. Screen verification is unavailable or this step contains sensitive information.",
+      };
+    if (
+      process.platform === "darwin" &&
+      systemPreferences.getMediaAccessStatus("screen") !== "granted"
+    )
+      return {
+        complete: false,
+        message: "Screen permission is unavailable. Use Done manually.",
+      };
+    const revision = gate.begin();
+    if (revision === undefined)
+      return {
+        complete: false,
+        message:
+          "Wait a few seconds before checking again. After five checks, use Done manually or ask a new question.",
+      };
+    checkAbort.abort();
+    checkAbort = new AbortController();
+    const signal = AbortSignal.any([checkAbort.signal, providerAbort.signal]);
+    coordinatesInvalid = true;
+    lessonAnnotations = [];
+    overlay.hide();
+    const controlsWereVisible = controls.isVisible();
+    controls.hide();
+    try {
+      const display = lessonDisplay;
+      const source = await captureDisplay(display, 1600);
+      signal.throwIfAborted();
+      if (!source || source.thumbnail.isEmpty())
+        throw new Error("Capture unavailable");
+      const image = encodeScreen(source.thumbnail, 1024 * 1024);
+      const result = await verifyAction(gate.action, image, signal);
+      if (gate !== actionGate || id !== turn || signal.aborted)
+        return {
+          complete: false,
+          message: "Screen changed. Check again when ready.",
+        };
+      const complete = gate.finish(revision, result);
+      if (result === "wrong-app" || result === "ambiguous") gate.armed = false;
+      return {
+        complete,
+        retry: result === "incomplete",
+        message: complete
+          ? "Screen verified."
+          : result === "wrong-app"
+            ? "Return to the intended app, then check again."
+            : result === "incomplete"
+              ? "Waiting for the expected result to appear."
+              : "I cannot confirm the result. Check the expected state or use Done manually.",
+      };
+    } catch {
+      gate.finish(revision, "ambiguous");
+      if (!signal.aborted) gate.armed = false;
+      return {
+        complete: false,
+        message:
+          "Verification unavailable or screen changed. Check again or use Done manually.",
+      };
+    } finally {
+      if (id === turn) {
+        overlay.showInactive();
+        publishLesson();
+        if (!automatic && controlsWereVisible) controls.show();
+      }
+    }
+  }
+  ipcMain.handle("teacher-check", (event, id, index, method, safeScreen) => {
+    authorize(event);
+    return checkAction(id, index, method, safeScreen);
+  });
+  // Wait for the UI to settle, then allow one follow-up for a delayed result.
+  requestAutomaticCheck = (followup = false) => {
+    clearTimeout(autoCheckTimer);
+    const gate = actionGate;
+    if (!gate || !gate.canWatch() || automaticChecks >= 20) return;
+    const id = turn;
+    autoCheckTimer = setTimeout(
+      async () => {
+        if (
+          gate !== actionGate ||
+          id !== turn ||
+          !gate.canWatch() ||
+          automaticChecks >= 20
+        )
+          return;
+        automaticChecks++;
+        controls.webContents.send("teacher-check-state", {
+          turn: id,
+          index: gate.step,
+          complete: false,
+          checking: true,
+          message: "Checking the result on screen",
+        });
+        const result = await checkAction(id, gate.step, "check", true, true);
+        if (gate !== actionGate || id !== turn) return;
+        if (!result.complete && (!gate.canWatch() || automaticChecks >= 20))
+          result.message +=
+            " Automatic checks are paused. Fallback controls are available.";
+        controls.webContents.send("teacher-check-state", {
+          turn: id,
+          index: gate.step,
+          checking: false,
+          ...result,
+        });
+        if ("retry" in result && result.retry && !followup)
+          requestAutomaticCheck(true);
+      },
+      Math.max(900, 3100 - (Date.now() - gate.lastCheck)),
+    );
+  };
+  ipcMain.handle("teacher-watch", (event, id, index) => {
+    authorize(event);
+    if (
+      !actionGate ||
+      id !== turn ||
+      actionGate.turn !== id ||
+      actionGate.step !== index
+    )
+      return;
+    if (actionGate.armed) return;
+    actionGate.arm();
+    const gate = actionGate;
+    clearTimeout(expiry);
+    expiry = setTimeout(() => {
+      if (gate !== actionGate || id !== turn || gate.confirmed) return;
+      gate.armed = false;
+      invalidateAction();
+      controls.webContents.send("teacher-check-state", {
+        turn: id,
+        index,
+        complete: false,
+        checking: false,
+        message:
+          "Automatic checking paused after two minutes. Fallback controls are available.",
+      });
+    }, 120_000);
+    requestAutomaticCheck();
+  });
+  ipcMain.handle("teacher-source", async (event, id, url) => {
+    if (
+      ![controls.webContents, overlay.webContents].includes(event.sender) ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error("Invalid sender");
+    if (
+      id !== turn ||
+      typeof url !== "string" ||
+      !publicSourceUrl(url) ||
+      !activeLesson?.sources?.some((source) => source.url === url)
+    )
+      throw new Error("Invalid lesson source");
+    await shell.openExternal(url);
   });
   ipcMain.handle("action", (event, action: unknown) => {
     authorize(event);

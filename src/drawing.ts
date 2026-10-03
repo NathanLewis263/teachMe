@@ -1,3 +1,4 @@
+// Turn validated shapes into SVG paths so the board and desktop use the same drawing rules.
 import type { Annotation } from "./contracts";
 
 // Every shape becomes a path so the same stroke animation works for all shapes.

@@ -1,3 +1,4 @@
+// Share shape rules between the model output checks and the drawing code.
 export const shapeKinds = [
   "arrow",
   "highlight",

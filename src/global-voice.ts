@@ -1,5 +1,13 @@
+// Watch global keys here; controls record the mic, then main transcribes the returned audio.
+import {
+  latchDisplay,
+  clearDisplay,
+  screenInput,
+  setInputGuardRunning,
+} from "./screen-state";
 import {
   app,
+  screen,
   BrowserWindow,
   dialog,
   ipcMain,
@@ -12,7 +20,7 @@ import { transcribeSpeech } from "./providers";
 
 export function globalVoice(
   controls: BrowserWindow,
-  stop: () => void,
+  stop: (newQuestion?: boolean) => void,
   status: (state: string, detail?: string) => void,
 ) {
   const gate = new HoldGate();
@@ -21,6 +29,7 @@ export function globalVoice(
   let abort = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const cancel = () => {
+    clearDisplay();
     gate.cancel();
     clearTimeout(timer);
     abort.abort();
@@ -39,6 +48,8 @@ export function globalVoice(
     UiohookKey.MetaRight,
   ]);
   const key = (down: boolean) => (e: UiohookKeyboardEvent) => {
+    if (down)
+      screenInput(undefined, e.metaKey || e.altKey ? "switch" : "typing");
     if (!enabled || !relevant.has(e.keycode)) return;
     const ctrl =
       e.ctrlKey &&
@@ -56,7 +67,10 @@ export function globalVoice(
     if (change === "press") {
       abort.abort();
       abort = new AbortController();
-      stop();
+      stop(true);
+      latchDisplay(
+        screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id,
+      );
       controls.webContents.send("voice-hold", "press");
       timer = setTimeout(() => {
         cancel();
@@ -70,6 +84,9 @@ export function globalVoice(
       controls.webContents.send("voice-hold", "release");
     }
   };
+  const pointer = (event: { x: number; y: number }) => screenInput(event);
+  const wheel = (event: { x: number; y: number }) =>
+    screenInput(event, "scroll");
   const down = key(true),
     up = key(false);
   const start = (requestPermission = false) => {
@@ -87,8 +104,11 @@ export function globalVoice(
       if (!running) {
         uIOhook.on("keydown", down);
         uIOhook.on("keyup", up);
+        uIOhook.on("mousedown", pointer);
+        uIOhook.on("wheel", wheel);
         uIOhook.start();
         running = true;
+        setInputGuardRunning(true);
       }
       enabled = true;
       status(
@@ -96,6 +116,9 @@ export function globalVoice(
         "Hold Control–Shift to talk. Release any chord key to submit. The question goes to OpenAI.",
       );
     } catch {
+      setInputGuardRunning(false);
+      uIOhook.removeListener("mousedown", pointer);
+      uIOhook.removeListener("wheel", wheel);
       uIOhook.removeListener("keydown", down);
       uIOhook.removeListener("keyup", up);
       status(
@@ -153,6 +176,7 @@ export function globalVoice(
   controls.webContents.on("render-process-gone", interrupt);
   app.on("before-quit", () => {
     cancel();
+    setInputGuardRunning(false);
     if (running) uIOhook.stop();
   });
   return { enable, cancel, restore };

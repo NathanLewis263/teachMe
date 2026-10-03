@@ -1,3 +1,5 @@
+// Keep React's bridge types lined up with the commands exposed by preload.ts.
+import type { ContextChoice, RenderChoice } from "./routing";
 import type { Lesson } from "./lesson";
 
 export type DisplayChoice = {
@@ -7,15 +9,28 @@ export type DisplayChoice = {
 export type LessonRequest = {
   requestId: number;
   question: string;
-  includeScreen: boolean;
+  context: ContextChoice | "auto";
+  voice?: boolean;
   displayId: number;
-  mode: "whiteboard" | "screen";
+  mode: RenderChoice | "auto";
+};
+export type RoutedLessonRequest = Omit<LessonRequest, "mode" | "context"> & {
+  mode: RenderChoice;
+  context: ContextChoice;
 };
 export type PlannedLesson = {
   turn: number;
   lesson: Lesson;
 };
 export interface AppBridge {
+  openSource(turn: number, url: string): Promise<void>;
+  watch(turn: number, index: number): Promise<void>;
+  check(
+    turn: number,
+    index: number,
+    method: "check" | "manual",
+    safeScreen: boolean,
+  ): Promise<{ complete: boolean; message: string }>;
   browse(turn: number, index: number): Promise<void>;
   boardRegion(
     region: {

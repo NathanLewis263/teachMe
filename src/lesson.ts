@@ -1,3 +1,6 @@
+// Share lesson data across main and React; visible frames stay separate from generated steps.
+import type { WebSource } from "./web-research";
+import { validCheckpoint, type ActionCheckpoint } from "./action-checkpoint";
 import { validAnnotation, type Annotation } from "./contracts";
 import {
   MAX_STEPS,
@@ -20,6 +23,7 @@ export type Ink = keyof typeof ink;
 export type LessonTable = { columns: string[]; rows: string[][] };
 export type LessonStep = {
   say: string;
+  action?: ActionCheckpoint;
   heading?: string;
   body?: string;
   formula?: string;
@@ -31,8 +35,11 @@ export type LessonStep = {
   removeIds?: string[];
 };
 export type Lesson = {
-  kind: "flow" | "drawing" | "notes" | "scene";
+  kind: "flow" | "drawing" | "notes" | "scene" | "voice";
+  rendering?: "none" | "whiteboard" | "screen" | "both";
   title: string;
+  sources?: WebSource[];
+  researchStatus?: "not-needed" | "verified" | "unavailable";
   color?: Ink;
   steps: LessonStep[];
 };
@@ -69,7 +76,7 @@ export function validLesson(value: unknown): value is Lesson {
   const a = value as Lesson;
   let scene: Scene = { nodes: [], links: [] };
   return (
-    ["flow", "drawing", "notes", "scene"].includes(a.kind) &&
+    ["flow", "drawing", "notes", "scene", "voice"].includes(a.kind) &&
     short(a.title, 80) &&
     (a.color === undefined || Object.hasOwn(ink, a.color)) &&
     Array.isArray(a.steps) &&
@@ -79,6 +86,7 @@ export function validLesson(value: unknown): value is Lesson {
       (step) =>
         step &&
         short(step.say, 1000) &&
+        (step.action === undefined || validCheckpoint(step.action)) &&
         (step.heading === undefined || short(step.heading, 80)) &&
         (step.body === undefined || short(step.body, 700)) &&
         (step.formula === undefined || short(step.formula, 240)) &&
@@ -86,14 +94,13 @@ export function validLesson(value: unknown): value is Lesson {
         (step.scene === undefined ||
           (a.kind === "scene" && validSceneEdit(step.scene))) &&
         (a.kind === "drawing" ||
+          a.rendering === "both" ||
           (!step.annotations?.length && !step.removeIds?.length)) &&
         (a.kind === "flow" ||
           (step.label === undefined && step.detail === undefined)) &&
         (a.kind !== "scene" || (!step.formula && !step.table)) &&
         (a.kind !== "notes" || !!(step.body || step.formula || step.table)) &&
         (a.kind !== "flow" ||
-          (!step.body && !step.formula && !step.table && !step.heading)) &&
-        (a.kind !== "drawing" ||
           (!step.body && !step.formula && !step.table && !step.heading)) &&
         (a.kind !== "flow" ||
           (short(step.label, 32) &&
@@ -107,8 +114,6 @@ export function validLesson(value: unknown): value is Lesson {
             step.removeIds.length <= 32 &&
             step.removeIds.every((id) => short(id, 40)))),
     ) &&
-    (a.kind !== "drawing" ||
-      a.steps.some((step) => (step.annotations?.length || 0) > 0)) &&
     (a.kind !== "scene" ||
       a.steps.every((step) => {
         if (step.scene) {

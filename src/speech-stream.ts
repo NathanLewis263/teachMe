@@ -1,6 +1,6 @@
+// One speech socket per step keeps audio from different narrations from getting mixed up.
 import WebSocket from "ws";
 
-// Each socket belongs to one validated segment, so audio has an exact stage ID.
 export async function* speechChunks(
   text: string,
   signal: AbortSignal,

@@ -1,6 +1,12 @@
+// React talks to Electron through this bridge; main still checks who sent each request.
 import { contextBridge, ipcRenderer } from "electron";
-// Expose a small bridge instead of giving React access to Electron.
 contextBridge.exposeInMainWorld("teachMe", {
+  openSource: (turn: number, url: string) =>
+    ipcRenderer.invoke("teacher-source", turn, url),
+  watch: (turn: number, index: number) =>
+    ipcRenderer.invoke("teacher-watch", turn, index),
+  check: (turn: number, index: number, method: string, safeScreen: boolean) =>
+    ipcRenderer.invoke("teacher-check", turn, index, method, safeScreen),
   browse: (turn: number, index: number) =>
     ipcRenderer.invoke("board-browse", turn, index),
   boardRegion: (region: unknown) => ipcRenderer.send("board-region", region),
@@ -27,6 +33,7 @@ contextBridge.exposeInMainWorld("teachMe", {
         "teacher-progress",
         "teacher-segment",
         "teacher-cancel",
+        "teacher-check-state",
         "lesson-clear",
         "lesson",
       ].includes(channel)

@@ -1,3 +1,4 @@
+// Animate the scene for the visible step; shapes and arrows share a clock so they stay together.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationPath } from "./drawing";
 import { ink, type Lesson } from "./lesson";
@@ -10,7 +11,6 @@ import {
   type SceneNode,
 } from "./scene";
 
-// Use the same clock for shapes and arrows so they move together.
 export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
   const scene = useMemo(
     () => sceneForSteps(lesson.steps, step),

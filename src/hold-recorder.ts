@@ -1,3 +1,4 @@
+// Record one key hold in React; cancellation must stop the mic too, not just ignore its result.
 export class HoldRecorder {
   private generation = 0;
   private held = false;

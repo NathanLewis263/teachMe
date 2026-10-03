@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "2.70.0",
+    "@typesafe-ai/sdk": "0.6.0",
     "openai": "^7.27.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
