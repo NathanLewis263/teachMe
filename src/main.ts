@@ -136,6 +136,41 @@ function waitingAction() {
     ? { turn: actionGate.turn, step: actionGate.step }
     : undefined;
 }
+// Request IDs of this turn's narrations by step, so each step continues the voice of the ones before it.
+let voiceTrail = {
+  turn: -1,
+  ids: new Map<number, Promise<string | undefined>>(),
+};
+function narrate(index: number, text: string, signal: AbortSignal) {
+  if (voiceTrail.turn !== turn) voiceTrail = { turn, ids: new Map() };
+  const ids = voiceTrail.ids;
+  const steps = activeLesson?.steps;
+  const earlier = [index - 3, index - 2, index - 1].flatMap(
+    (step) => ids.get(step) ?? [],
+  );
+  let settle: (id: string | undefined) => void = () => {};
+  ids.set(index, new Promise((resolve) => (settle = resolve)));
+  return speechChunks(text, signal, speechModel(), {
+    previousText: steps?.[index - 1]?.say,
+    nextText: steps?.[index + 1]?.say,
+    // Wait briefly for earlier IDs; a slow or failed step only loses the stitching.
+    previousRequestIds: async () => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const found: (string | undefined)[] = await Promise.race([
+          Promise.all(earlier),
+          new Promise<undefined[]>((resolve) => {
+            timeout = setTimeout(() => resolve([]), 3000);
+          }),
+        ]);
+        return found.filter((id): id is string => !!id);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    onRequestId: settle,
+  });
+}
 // Synthesize the following step of the same page while the current narration plays.
 function prefetchSpeech() {
   const lesson = activeLesson;
@@ -155,7 +190,7 @@ function prefetchSpeech() {
     index,
     speech: new PreparedSpeech(
       step.say,
-      (text, signal) => speechChunks(text, signal, speechModel()),
+      (text, signal) => narrate(index, text, signal),
       providerAbort.signal,
       2_400_000,
     ),
@@ -220,11 +255,12 @@ const preparation = new StepPreparation({
     return nextPage.plan(image, signal, segment);
   },
   canSpeak: () => lessonSpeechEnabled,
+  // Preparation runs while the action step is the latest revealed step.
   speak: (text, signal) =>
-    speechChunks(
+    narrate(
+      lessonStep + 1,
       text,
       AbortSignal.any([signal, providerAbort.signal]),
-      speechModel(),
     ),
 });
 
@@ -1109,7 +1145,7 @@ app.whenReady().then(() => {
         chunks:
           reuse && ready
             ? ready.speech.play(stop)
-            : speechChunks(activeLesson.steps[index].say, stop, speechModel()),
+            : narrate(index, activeLesson.steps[index].say, stop),
       };
       prefetchSpeech();
     }

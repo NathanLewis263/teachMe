@@ -111,7 +111,7 @@ export class PcmPlayer {
       this.sources.add(source);
       // Rebuffer after an underrun without skipping or replaying samples.
       if (this.next <= this.context.currentTime)
-        this.next = this.context.currentTime + 0.25;
+        this.next = this.context.currentTime + 0.5;
       source.start(this.next);
       this.next += buffer.duration;
     }

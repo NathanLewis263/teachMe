@@ -1,17 +1,34 @@
-// One speech socket per step keeps audio from different narrations from getting mixed up.
-import WebSocket from "ws";
+// One speech request per step keeps audio from different narrations from getting mixed up.
+// Earlier steps' request IDs let ElevenLabs keep the same voice and delivery across requests.
+export type SpeechContext = {
+  previousText?: string;
+  nextText?: string;
+  // Resolves once earlier steps report their IDs, so a prefetched step can still chain to them.
+  previousRequestIds?: () => Promise<string[]>;
+  // Called once with this request's ID, or undefined if the request never started.
+  onRequestId?: (id: string | undefined) => void;
+};
 
 export async function* speechChunks(
   text: string,
   signal: AbortSignal,
   model: string,
+  context: SpeechContext = {},
 ): AsyncGenerator<Uint8Array> {
+  let reported = false;
+  const report = (id?: string) => {
+    if (reported) return;
+    reported = true;
+    context.onRequestId?.(id);
+  };
   const key = process.env.ELEVENLABS_API_KEY;
   const voice = process.env.ELEVENLABS_VOICE_ID;
-  if (!key || !voice || !/^[a-zA-Z0-9_-]{1,100}$/.test(voice))
+  if (!key || !voice || !/^[a-zA-Z0-9_-]{1,100}$/.test(voice)) {
+    report();
     throw new Error(
       "ElevenLabs voice is not configured. Reading mode is available.",
     );
+  }
   if (
     ![
       "eleven_flash_v2_5",
@@ -20,19 +37,17 @@ export async function* speechChunks(
       "eleven_flash_v2",
       "eleven_turbo_v2",
     ].includes(model)
-  )
+  ) {
+    report();
     throw new Error(
-      "This model is not enabled for WebSocket speech. Use eleven_flash_v2_5.",
+      "This model is not enabled for streamed speech. Use eleven_flash_v2_5.",
     );
-  signal.throwIfAborted();
-  const socket = new WebSocket(
-    `wss://api.elevenlabs.io/v1/text-to-speech/${voice}/stream-input?model_id=${encodeURIComponent(model)}&output_format=pcm_24000&sync_alignment=true`,
-    {
-      headers: { "xi-api-key": key },
-      handshakeTimeout: 15000,
-      maxPayload: 1500000,
-    },
-  );
+  }
+  if (signal.aborted) {
+    report();
+    signal.throwIfAborted();
+  }
+  const stop = new AbortController();
   const queue: Uint8Array[] = [];
   let total = 0,
     done = false;
@@ -45,7 +60,8 @@ export async function* speechChunks(
     if (signal.aborted) queue.length = 0;
     clearTimeout(idle);
     clearTimeout(deadline);
-    socket.terminate();
+    stop.abort();
+    report();
     wake();
   };
   const resetTimeout = () => {
@@ -62,87 +78,84 @@ export async function* speechChunks(
     () => fail("Voice segment exceeded its time limit."),
     45_000,
   );
-  socket.onopen = () => {
-    if (signal.aborted || failure) return socket.close();
-    socket.send(
-      JSON.stringify({
-        text: " ",
-        voice_settings: { speed: 1.0, stability: 0.5, similarity_boost: 0.8 },
-        generation_config: { chunk_length_schedule: [50, 120, 160, 290] },
-      }),
+  // Read the response as fast as it arrives; playback pulls from the queue at its own pace.
+  const pump = async () => {
+    const previousRequestIds = (await context.previousRequestIds?.()) ?? [];
+    if (failure) return;
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voice}/stream?output_format=pcm_24000`,
+      {
+        method: "POST",
+        headers: { "xi-api-key": key, "content-type": "application/json" },
+        body: JSON.stringify({
+          text: text.trim(),
+          model_id: model,
+          voice_settings: {
+            speed: 1.0,
+            stability: 0.7,
+            similarity_boost: 0.8,
+          },
+          ...(context.previousText?.trim()
+            ? { previous_text: context.previousText.trim() }
+            : {}),
+          ...(context.nextText?.trim()
+            ? { next_text: context.nextText.trim() }
+            : {}),
+          ...(previousRequestIds.length
+            ? { previous_request_ids: previousRequestIds.slice(-3) }
+            : {}),
+        }),
+        signal: stop.signal,
+      },
     );
-    socket.send(JSON.stringify({ text: text.trim() + " " }));
-    socket.send(JSON.stringify({ text: " ", flush: true }));
-    socket.send(JSON.stringify({ text: "" }));
-  };
-  socket.on("message", (raw, isBinary) => {
-    if (failure || signal.aborted || done) return;
-    try {
-      if (isBinary) throw new Error();
-      const value = JSON.parse(raw.toString());
-      if (value.error || value.message) {
-        const code = value.error?.code || value.error || value.code;
-        const label =
-          typeof code === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(code)
-            ? ` (${code})`
-            : "";
-        return fail(
-          `ElevenLabs rejected speech${label}. Check voice access, Text-to-Speech permission and credits. Continue reading.`,
-        );
-      }
-      if (value.audio) {
-        if (
-          typeof value.audio !== "string" ||
-          !/^[A-Za-z0-9+/]*={0,2}$/.test(value.audio)
-        )
-          throw new Error();
-        const chunk = new Uint8Array(Buffer.from(value.audio, "base64"));
-        total += chunk.length;
-        // Cap each segment at 50 seconds of PCM, including queued audio.
-        if (total > 2_400_000) throw new Error();
-        queue.push(chunk);
-      }
-      if (value.isFinal === true || value.is_final === true) {
-        done = true;
-        clearTimeout(idle);
-        clearTimeout(deadline);
-        socket.close();
-      } else resetTimeout();
-      wake();
-    } catch {
-      fail("Voice stream returned invalid audio. Continue in reading mode.");
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {});
+      const status = response.status;
+      const hint =
+        status === 401 || status === 403
+          ? "Check the ElevenLabs key, Text-to-Speech permission and voice access."
+          : status === 429
+            ? "Check ElevenLabs credits and concurrent-request limits."
+            : status === 404
+              ? "Check ELEVENLABS_VOICE_ID."
+              : status === 400 || status === 422
+                ? "Check voice access and the model setting."
+                : "The voice service rejected the request. Try again later.";
+      return fail(
+        `ElevenLabs rejected speech (HTTP ${status}). ${hint} Continue reading.`,
+      );
     }
-  });
-  socket.on("unexpected-response", (_request, response) => {
-    const status = response.statusCode;
-    response.resume();
-    const hint =
-      status === 401 || status === 403
-        ? "Check the ElevenLabs key, Text-to-Speech permission and voice access."
-        : status === 429
-          ? "Check ElevenLabs credits and concurrent-request limits."
-          : status === 404
-            ? "Check ELEVENLABS_VOICE_ID."
-            : "The voice service rejected the connection. Try again later.";
-    fail(
-      `ElevenLabs connection rejected (HTTP ${status || "unknown"}). ${hint} Continue reading.`,
-    );
-  });
-  socket.on("error", (error: NodeJS.ErrnoException) => {
+    const id = response.headers.get("request-id");
+    report(id && /^[a-zA-Z0-9_-]{1,100}$/.test(id) ? id : undefined);
+    if (!response.body)
+      return fail("Voice stream was empty. Continue in reading mode.");
+    const reader = response.body.getReader();
+    while (true) {
+      const { done: end, value } = await reader.read();
+      if (failure) return;
+      if (end) break;
+      total += value.length;
+      // Cap each segment at about 80 seconds of PCM, which covers the longest allowed step.
+      if (total > 4_000_000)
+        return fail("Voice segment was too long. Continue in reading mode.");
+      queue.push(value);
+      resetTimeout();
+      wake();
+    }
+    done = true;
+    clearTimeout(idle);
+    clearTimeout(deadline);
+    wake();
+  };
+  pump().catch((error: { cause?: { code?: unknown } }) => {
     const code =
-      error.code && /^[A-Z0-9_]{1,50}$/.test(error.code)
-        ? ` (${error.code})`
+      typeof error?.cause?.code === "string" &&
+      /^[A-Z0-9_]{1,50}$/.test(error.cause.code)
+        ? ` (${error.cause.code})`
         : "";
     fail(
       `ElevenLabs voice connection failed${code}. Check the network or VPN and try again. Continue reading.`,
     );
-  });
-  socket.on("close", (code) => {
-    if (!done && !failure)
-      fail(
-        `ElevenLabs voice connection ended early (code ${code}). Continue reading.`,
-      );
-    wake();
   });
   try {
     while (true) {
@@ -164,6 +177,7 @@ export async function* speechChunks(
     clearTimeout(deadline);
     signal.removeEventListener("abort", abort);
     queue.length = 0;
-    socket.terminate();
+    stop.abort();
+    report();
   }
 }
