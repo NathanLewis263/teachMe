@@ -1,3 +1,4 @@
+// Check provider JSON before showing it; TypeScript types alone cannot make it safe to draw.
 import { validAnnotation } from "./contracts";
 import {
   validLesson,
@@ -53,6 +54,7 @@ export function segmentIssue(lesson: Lesson): string | undefined {
     return "annotations contain invalid shapes or coordinates";
   if (
     lesson.kind !== "drawing" &&
+    lesson.rendering !== "both" &&
     (step.annotations?.length || step.removeIds?.length)
   )
     return "desktop annotations require a drawing lesson";
@@ -67,10 +69,15 @@ export function segmentIssue(lesson: Lesson): string | undefined {
     return "notes need visible body, formula or table content";
   if (lesson.kind === "flow" && !step.label) return "flow steps need a label";
   if (
-    (lesson.kind === "flow" || lesson.kind === "drawing") &&
+    lesson.kind === "flow" &&
     (step.heading || step.body || step.formula || step.table)
   )
     return `${lesson.kind} steps contain text fields this view cannot display`;
+  if (
+    lesson.kind === "voice" &&
+    Object.keys(step).some((key) => key !== "say" && key !== "action")
+  )
+    return "spoken replies contain only say";
   if (!validLesson(lesson as unknown))
     return lesson.kind === "scene"
       ? "scene must have visible nodes, connected links and consistent in-bounds motion"

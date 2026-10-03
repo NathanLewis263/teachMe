@@ -1,8 +1,8 @@
+// Turn partial model text into valid steps; a network chunk is not a whole teaching step.
 import { type Lesson } from "./lesson";
 import { normalizeStep, segmentIssue } from "./segment-validation";
-import type { LessonRequest } from "./teacher-types";
+import type { RoutedLessonRequest } from "./teacher-types";
 
-// Only complete JSON lines can become visible or spoken.
 export class LessonStream {
   private buffer = "";
   private size = 0;
@@ -10,13 +10,14 @@ export class LessonStream {
   private header: Omit<Lesson, "steps"> | undefined;
   lesson: Lesson | undefined;
   constructor(
-    private mode: LessonRequest["mode"],
+    private mode: RoutedLessonRequest["mode"],
     private visual: boolean,
   ) {}
 
   push(text: string): Lesson[] {
     this.size += text.length;
     if (this.size > 180_000) throw new Error("Lesson stream is too large.");
+    // A network chunk can stop halfway through JSON; keep the unfinished line.
     this.buffer += text;
     const lessons: Lesson[] = [];
     let end: number;
@@ -42,10 +43,15 @@ export class LessonStream {
           typeof record.title !== "string" ||
           !record.title.trim() ||
           record.title.length > 80 ||
-          !["notes", "scene", "flow", "drawing"].includes(record.kind) ||
-          (this.mode === "screen"
-            ? record.kind !== "drawing"
-            : record.kind === "drawing") ||
+          !["notes", "scene", "flow", "drawing", "voice"].includes(
+            record.kind,
+          ) ||
+          (this.mode === "none"
+            ? record.kind !== "voice"
+            : this.mode === "screen"
+              ? record.kind !== "drawing"
+              : this.mode === "whiteboard" &&
+                ["drawing", "voice"].includes(record.kind)) ||
           (this.visual && record.kind === "notes")
         )
           throw new Error(
@@ -53,6 +59,7 @@ export class LessonStream {
           );
         this.header = {
           kind: record.kind,
+          rendering: this.mode,
           title: record.title,
           color: record.color,
         };
@@ -71,10 +78,10 @@ export class LessonStream {
         const issue = segmentIssue(lesson);
         if (issue)
           throw new Error(
-            `Teaching segment ${lesson.steps.length}: ${issue}. Earlier valid parts remain available.`,
+            `Teaching segment ${lesson.steps.length}: ${issue}.${this.lesson ? " Earlier valid parts remain available." : ""}`,
           );
         if (
-          this.mode === "screen" &&
+          (this.mode === "screen" || this.mode === "both") &&
           record.step.annotations?.some((a: { motion?: unknown }) => a.motion)
         )
           throw new Error("Screen annotations must be static.");

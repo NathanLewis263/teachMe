@@ -1,3 +1,5 @@
+// Draw main's lesson frames; moving or browsing the board does not change the speech queue.
+import { placeBoard } from "./board-placement";
 import { SceneView } from "./scene-view";
 import React, { useEffect, useRef, useState } from "react";
 import { validAnnotation, type Annotation } from "./contracts";
@@ -214,15 +216,19 @@ export function Overlay() {
   const [position, setPosition] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const [compact, setCompact] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const fullBoardSize = useRef({ width: 680, height: 400 });
+  const arrange = useRef<() => void>(() => {});
   const reportRegion = () => {
-    const r = board.current?.getBoundingClientRect();
+    const boardBounds = board.current?.getBoundingClientRect();
     window.teachMe.boardRegion(
-      r
+      boardBounds
         ? {
-            x: r.x,
-            y: r.y,
-            width: r.width,
-            height: r.height,
+            x: boardBounds.x,
+            y: boardBounds.y,
+            width: boardBounds.width,
+            height: boardBounds.height,
             dragging: !!drag.current,
           }
         : null,
@@ -256,7 +262,10 @@ export function Overlay() {
   }, []);
   useEffect(() => {
     reportRegion();
-    const observer = new ResizeObserver(reportRegion);
+    const observer = new ResizeObserver(() => {
+      reportRegion();
+      arrange.current();
+    });
     if (board.current) observer.observe(board.current);
     return () => {
       observer.disconnect();
@@ -264,13 +273,46 @@ export function Overlay() {
     };
   }, [lesson, position, size]);
   useEffect(() => {
-    if (!position || !board.current) return;
-    const r = board.current.getBoundingClientRect();
-    setPosition({
-      x: Math.max(0, Math.min(position.x, size.width - r.width)),
-      y: Math.max(0, Math.min(position.y, size.height - r.height)),
-    });
-  }, [size]);
+    setExpanded(false);
+  }, [lesson?.turn, lesson?.step]);
+  arrange.current = () => {
+    if (!lesson || !board.current || drag.current) return;
+    const boardBounds = board.current.getBoundingClientRect();
+    if (!compact)
+      fullBoardSize.current = {
+        width: boardBounds.width,
+        height: boardBounds.height,
+      };
+    const viewport = lesson.viewport || { x: 0, y: 0, ...size };
+    const targets = lesson.annotations.filter(validAnnotation).map((a) => ({
+      x: viewport.x + a.x * viewport.width - 16,
+      y: viewport.y + a.y * viewport.height - 16,
+      width: a.width * viewport.width + 32,
+      height: a.height * viewport.height + (a.label ? 72 : 32),
+    }));
+    const full = placeBoard(
+      { x: boardBounds.x, y: boardBounds.y, ...fullBoardSize.current },
+      viewport,
+      targets,
+    );
+    const shouldCompact = full.blocked && !expanded;
+    const next = shouldCompact
+      ? placeBoard(
+          { x: boardBounds.x, y: boardBounds.y, width: 220, height: 56 },
+          viewport,
+          targets,
+        )
+      : full;
+    setCompact(shouldCompact);
+    setPosition((old) =>
+      old && Math.abs(old.x - next.x) < 1 && Math.abs(old.y - next.y) < 1
+        ? old
+        : { x: next.x, y: next.y },
+    );
+  };
+  useEffect(() => {
+    arrange.current();
+  }, [lesson, size, expanded]);
   const browse = (index: number) => {
     if (lesson) void window.teachMe.browse(lesson.turn, index);
   };
@@ -282,96 +324,140 @@ export function Overlay() {
         height={lesson?.viewport?.height || size.height}
         offset={lesson?.viewport}
       />
-      {lesson && lesson.lesson.kind !== "drawing" && (
-        <section
-          ref={board}
-          className="lesson-board"
-          aria-label={lesson.lesson.title}
-          style={position ? { left: position.x, top: position.y } : undefined}
-        >
-          <header
-            className="lesson-heading board-drag-handle"
-            title="Drag to move whiteboard"
-            onPointerDown={(e) => {
-              if (e.button !== 0 || !board.current) return;
-              const r = board.current.getBoundingClientRect();
-              drag.current = {
-                x: e.clientX,
-                y: e.clientY,
-                left: r.left,
-                top: r.top,
-              };
-              e.currentTarget.setPointerCapture(e.pointerId);
-              reportRegion();
-            }}
-            onPointerMove={(e) => {
-              const d = drag.current,
-                r = board.current?.getBoundingClientRect();
-              if (!d || !r) return;
-              setPosition({
-                x: Math.max(
-                  0,
-                  Math.min(d.left + e.clientX - d.x, innerWidth - r.width),
-                ),
-                y: Math.max(
-                  0,
-                  Math.min(d.top + e.clientY - d.y, innerHeight - r.height),
-                ),
-              });
-            }}
-            onPointerUp={(e) => {
-              drag.current = null;
-              e.currentTarget.releasePointerCapture(e.pointerId);
-              reportRegion();
-            }}
-            onLostPointerCapture={() => {
-              drag.current = null;
-              reportRegion();
-            }}
+      {lesson &&
+        (lesson.lesson.kind !== "drawing" ||
+          lesson.lesson.steps.some(
+            (step) => step.heading || step.body || step.formula || step.table,
+          )) &&
+        lesson.lesson.kind !== "voice" && (
+          <section
+            ref={board}
+            className={`lesson-board${lesson.lesson.kind === "drawing" ? " screen-caption" : ""}${compact ? " board-compact" : ""}`}
+            aria-label={lesson.lesson.title}
+            style={position ? { left: position.x, top: position.y } : undefined}
           >
-            <h2>{lesson.lesson.title}</h2>
-          </header>
-          <div className="board-content">
-            {lesson.lesson.kind === "scene" ? (
-              <>
-                <SceneView lesson={lesson.lesson} step={lesson.step} />
-                <p className="scene-caption">
-                  Schematic illustration
-                  {(lesson.lesson.steps[lesson.step].heading ||
-                    lesson.lesson.steps[lesson.step].body) &&
-                    ` · ${lesson.lesson.steps[lesson.step].heading || lesson.lesson.steps[lesson.step].body}`}
-                </p>
-              </>
-            ) : lesson.lesson.kind === "notes" ? (
-              <Notes lesson={lesson.lesson} step={lesson.step} />
-            ) : (
-              <Flow lesson={lesson.lesson} step={lesson.step} />
+            <header
+              className="lesson-heading board-drag-handle"
+              title="Drag to move"
+              onPointerDown={(e) => {
+                if (e.button !== 0 || !board.current) return;
+                const boardBounds = board.current.getBoundingClientRect();
+                drag.current = {
+                  x: e.clientX,
+                  y: e.clientY,
+                  left: boardBounds.left,
+                  top: boardBounds.top,
+                };
+                e.currentTarget.setPointerCapture(e.pointerId);
+                reportRegion();
+              }}
+              onPointerMove={(e) => {
+                const dragStart = drag.current,
+                  boardBounds = board.current?.getBoundingClientRect();
+                if (!dragStart || !boardBounds) return;
+                setPosition({
+                  x: Math.max(
+                    0,
+                    Math.min(
+                      dragStart.left + e.clientX - dragStart.x,
+                      innerWidth - boardBounds.width,
+                    ),
+                  ),
+                  y: Math.max(
+                    0,
+                    Math.min(
+                      dragStart.top + e.clientY - dragStart.y,
+                      innerHeight - boardBounds.height,
+                    ),
+                  ),
+                });
+              }}
+              onPointerUp={(e) => {
+                drag.current = null;
+                e.currentTarget.releasePointerCapture(e.pointerId);
+                reportRegion();
+              }}
+              onLostPointerCapture={() => {
+                drag.current = null;
+                reportRegion();
+              }}
+            >
+              <h2>{lesson.lesson.title}</h2>
+              {compact && (
+                <button
+                  className="board-expand"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setExpanded(true)}
+                >
+                  Show board
+                </button>
+              )}
+            </header>
+            <div className="board-content">
+              {lesson.lesson.kind === "scene" ? (
+                <>
+                  <SceneView lesson={lesson.lesson} step={lesson.step} />
+                  <p className="scene-caption">
+                    Schematic illustration
+                    {(lesson.lesson.steps[lesson.step].heading ||
+                      lesson.lesson.steps[lesson.step].body) &&
+                      ` · ${lesson.lesson.steps[lesson.step].heading || lesson.lesson.steps[lesson.step].body}`}
+                  </p>
+                </>
+              ) : lesson.lesson.kind === "notes" ||
+                lesson.lesson.kind === "drawing" ? (
+                <Notes lesson={lesson.lesson} step={lesson.step} />
+              ) : (
+                <Flow lesson={lesson.lesson} step={lesson.step} />
+              )}
+            </div>
+            <nav className="board-navigation" aria-label="Slides">
+              <button
+                onClick={() => browse(lesson.step - 1)}
+                disabled={lesson.step === 0}
+              >
+                ← Previous
+              </button>
+              <span>
+                {lesson.step + 1} / {lesson.lesson.steps.length}
+              </span>
+              <button
+                onClick={() => browse(lesson.step + 1)}
+                disabled={lesson.step === lesson.lesson.steps.length - 1}
+              >
+                Next →
+              </button>
+            </nav>
+            {!!lesson.lesson.sources?.length && (
+              <details className="lesson-sources">
+                <summary>Web sources</summary>
+                <ul>
+                  {lesson.lesson.sources.map((source) => (
+                    <li key={source.url}>
+                      <button
+                        onClick={() =>
+                          void window.teachMe
+                            .openSource(lesson.turn, source.url)
+                            .catch(() => {})
+                        }
+                      >
+                        {source.title}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
-          </div>
-          <nav className="board-navigation" aria-label="Slides">
-            <button
-              onClick={() => browse(lesson.step - 1)}
-              disabled={lesson.step === 0}
-            >
-              ← Previous
-            </button>
-            <span>
-              {lesson.step + 1} / {lesson.lesson.steps.length}
-            </span>
-            <button
-              onClick={() => browse(lesson.step + 1)}
-              disabled={lesson.step === lesson.lesson.steps.length - 1}
-            >
-              Next →
-            </button>
-          </nav>
-          <footer className="lesson-progress">
-            {lesson.lesson.steps.map((_, index) => (
-              <i key={index} className={index <= lesson.step ? "shown" : ""} />
-            ))}
-          </footer>
-        </section>
-      )}
+            <footer className="lesson-progress">
+              {lesson.lesson.steps.map((_, index) => (
+                <i
+                  key={index}
+                  className={index <= lesson.step ? "shown" : ""}
+                />
+              ))}
+            </footer>
+          </section>
+        )}
     </>
   );
 }

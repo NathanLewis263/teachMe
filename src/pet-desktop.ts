@@ -1,3 +1,5 @@
+// Own the seal window and tray menu, and connect their controls to global voice input.
+import { useScreenOnce } from "./screen-state";
 import { globalVoice } from "./global-voice";
 import {
   app,
@@ -12,7 +14,10 @@ import {
 } from "electron";
 import path from "node:path";
 
-export function createPet(controls: BrowserWindow, stop: () => void) {
+export function createPet(
+  controls: BrowserWindow,
+  stop: (newQuestion?: boolean) => void,
+) {
   const size = { width: 220, height: 168 };
   const area = screen.getPrimaryDisplay().workArea;
   const pet = new BrowserWindow({
@@ -90,6 +95,14 @@ export function createPet(controls: BrowserWindow, stop: () => void) {
           const p = screen.getCursorScreenPoint();
           pet.setPosition(p.x - 110, p.y - 84);
           clamp();
+        },
+      },
+      {
+        label: "Use my screen for next question",
+        type: "checkbox",
+        checked: useScreenOnce(),
+        click: (item) => {
+          useScreenOnce(item.checked);
         },
       },
       { label: "Teaching controls…", click: openControls },
