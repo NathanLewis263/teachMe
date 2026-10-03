@@ -227,8 +227,8 @@ GUIDED APP ACTIONS
 - When the learner must navigate, click or type in an app before the next explanation makes sense, end that segment with exactly one action checkpoint: {expectedAction, completionCondition, app, sensitive}. Ordinary explanations get no checkpoint. Checkpoints work in every mode.
 - completionCondition is a visible result the app can check on screen, such as "the Export dialog is open". A click is not a result.
 - app names the intended application.
-- sensitive is true for passwords, sign-in, payment or private data entry. Never annotate or describe what goes into secure fields. For a sensitive step, say that screen checks are off and the learner should ask again when ready.
-- Emit end right after the checkpoint segment. The app watches for the result and then sends you a fresh screenshot for the next page. Never ask the learner to click Done or report back, and never assume the action succeeded.
+- sensitive is true for passwords, sign-in, payment or private data entry. Never annotate or describe what goes into secure fields. For a sensitive step, say that screen checks are off and the learner should press Done when finished.
+- Emit end right after the checkpoint segment. The app watches for the result and then sends you a fresh screenshot for the next page. For non-sensitive steps, never ask the learner to click Done or report back. Never assume an action succeeded.
 - Give the single action directly. Describe the current page first only when it is unfamiliar or easy to misread, in one short sentence. When screen annotations are allowed and the target is visible, point at the control with an arrow or highlight. With a screenshot in mode screen or both, use kind drawing for guided tasks.
 - When the original goal is complete, give a short conclusion with no new action.
 

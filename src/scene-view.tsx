@@ -90,7 +90,7 @@ export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
           height="24"
           patternUnits="userSpaceOnUse"
         >
-          <circle cx="1" cy="1" r=".7" fill="#ffffff0b" />
+          <circle cx="1" cy="1" r=".7" fill="#203c4014" />
         </pattern>
         <filter id="scene-glow" x="-30%" y="-30%" width="160%" height="160%">
           <feGaussianBlur stdDeviation="4" result="blur" />
@@ -223,7 +223,7 @@ export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
               width={label.width}
               height={label.height}
               rx={label.height / 2}
-              fill="#12252b"
+              fill="#ffffff"
               fillOpacity=".94"
               stroke={color}
               strokeOpacity=".38"
@@ -238,7 +238,7 @@ export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
               x={label.x + 22}
               y={label.y + label.height / 2}
               dominantBaseline="central"
-              fill="#eef4f3"
+              fill="#203c40"
               fontSize="13"
               fontWeight="550"
             >

@@ -6,7 +6,16 @@ import type OpenAI from "openai";
 import { openaiClient } from "./providers";
 
 // The folder is indexed in an OpenAI vector store; only its ID is kept locally.
-export type Course = { folder: string; vectorStoreId: string; files: number };
+export type Course = {
+  folder: string;
+  vectorStoreId: string;
+  files: number;
+  bytes?: number;
+  updated?: number;
+  failed?: number;
+  // Each entry names what was left out, such as ".png" or "Over 50 MB".
+  skipped?: { reason: string; count: number }[];
+};
 
 // File types OpenAI file search can read.
 const readable = new Set(
@@ -46,22 +55,36 @@ export async function indexCourse(folder: string): Promise<void> {
   indexing = true;
   try {
     const files: string[] = [];
+    const skipped = new Map<string, number>();
+    const skip = (reason: string) =>
+      skipped.set(reason, (skipped.get(reason) || 0) + 1);
+    let bytes = 0;
     for (const entry of await readdir(folder, {
       recursive: true,
       withFileTypes: true,
     })) {
       const full = path.join(entry.parentPath, entry.name);
-      // Skip hidden files and folders such as .git.
+      // Skip hidden files and folders such as .git without reporting them.
       if (
         !entry.isFile() ||
-        !readable.has(path.extname(entry.name).toLowerCase()) ||
         path
           .relative(folder, full)
           .split(path.sep)
           .some((part) => part.startsWith("."))
       )
         continue;
-      if ((await stat(full)).size <= 50 * 1024 * 1024) files.push(full);
+      const extension = path.extname(entry.name).toLowerCase();
+      if (!readable.has(extension)) {
+        skip(extension || "No extension");
+        continue;
+      }
+      const size = (await stat(full)).size;
+      if (size > 50 * 1024 * 1024) {
+        skip("Over 50 MB");
+        continue;
+      }
+      files.push(full);
+      bytes += size;
     }
     if (!files.length)
       throw new Error(
@@ -91,6 +114,12 @@ export async function indexCourse(folder: string): Promise<void> {
         folder,
         vectorStoreId: store.id,
         files: batch.file_counts.completed,
+        bytes,
+        updated: Date.now(),
+        failed: batch.file_counts.failed,
+        skipped: [...skipped]
+          .map(([reason, count]) => ({ reason, count }))
+          .sort((a, b) => b.count - a.count),
       } satisfies Course),
     );
     if (previous) await removeStore(client, previous.vectorStoreId);

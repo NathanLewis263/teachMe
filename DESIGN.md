@@ -6,13 +6,13 @@ A quiet desktop companion and a readable teaching canvas. The teal-grey seal on 
 
 ## Visual system
 
-`src/styles.css` owns runtime tokens: paper #f2f6f5, ink #203c40, muted #587074, accent #24675f, line #d5e1df. The blackboard uses #14282f with a quiet dark frame and bright chalk colors from `boardInk` in `lesson.ts`, shared with desktop annotation ink. System sans-serif keeps the desktop feel; 16px board prose with generous line spacing supports reading. Left-align content. Use separators for settings groups and one inset panel for a checkpoint, rather than cards around every field.
+`src/styles.css` owns runtime tokens: paper #f2f6f5, ink #203c40, muted #587074, accent #24675f, line #d5e1df. The board is white with ink #203c40 and darker accent inks from `boardInk` in `lesson.ts`. Desktop annotations keep the bright `ink` colors. System sans-serif keeps the desktop feel; 16px board prose with generous line spacing supports reading. Left-align content. Use separators for settings groups and one inset panel for a checkpoint, rather than cards around every field.
 
 ## Layout and behavior
 
-`teacher-runtime.tsx` runs recording, playback and checkpoint logic invisibly. Context and drawing stay automatic; display stays under pointer. `pet.tsx` renders a bounded, scrollable status/narration bubble above the seal, with reading Continue and a Check screen retry when needed. The seal does not wander by default. Wander is an opt-in menu toggle and pauses while lesson text is visible. `course-files.tsx` owns the file-only Eat my files window opened from the seal or tray menu. `overlay.tsx` owns the draggable whiteboard, slide navigation and sources; `scene-view.tsx` owns animated diagrams. Board width follows available viewport space, not an assumed permanently open controls panel.
+`teacher-runtime.tsx` runs recording, playback and checkpoint logic invisibly. Context and drawing stay automatic; display stays under pointer. `pet.tsx` renders a pill above the seal while listening (timer and level bars) or preparing (four phase segments), then a card with slide count, pause, narration, a guided-step checklist and source chips. Keep labels short; detail goes in titles. The seal does not wander by default. Wander is an opt-in menu toggle and pauses while lesson text is visible. `course-files.tsx` owns the file-only Eat my files window opened from the seal or tray menu. `overlay.tsx` owns the draggable whiteboard, slide navigation and sources; `scene-view.tsx` owns animated diagrams. Board width follows available viewport space, not an assumed permanently open controls panel.
 
-End lesson, Stop & clear, and the bubble close button cancel and clear. The Eat my files window has Done; it does not expose lesson controls. Previous/Next only browse; speech and generation continue. Plain Escape is not mapped; Command/Ctrl–Shift–Escape remains the global stop shortcut.
+End lesson, Stop & clear, and the bubble close button cancel and clear. The Eat my files window has Done; it does not expose lesson controls. The board's segment bar and arrows only browse; speech and generation continue. Plain Escape is not mapped; Command/Ctrl–Shift–Escape remains the global stop shortcut.
 
 Keep visible focus, reduced motion, accessible status text and keyboard-operable bubble controls. Credentials and OS permissions remain user-controlled.
 

@@ -19,8 +19,15 @@ export const ink = {
   violet: "#c2adff",
   white: "#f1f5f4",
 } as const;
-// The blackboard and desktop annotations share bright, readable chalk colors.
-export const boardInk = ink;
+// Desktop annotations keep the bright colors; the white board uses darker matching inks.
+export const boardInk: Record<Ink, string> = {
+  mint: "#1d7f68",
+  blue: "#2f68c4",
+  amber: "#a8670f",
+  coral: "#c2463a",
+  violet: "#6d4fc9",
+  white: "#203c40",
+};
 export type Ink = keyof typeof ink;
 export type LessonTable = { columns: string[]; rows: string[][] };
 export type LessonStep = {
@@ -49,6 +56,8 @@ export type LessonFrame = {
   turn: number;
   lesson: Lesson;
   step: number;
+  // The step being narrated; step can differ while the learner browses.
+  live?: number;
   annotations: Annotation[];
   viewport?: { x: number; y: number; width: number; height: number };
 };

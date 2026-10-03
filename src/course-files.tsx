@@ -12,7 +12,9 @@ export function CourseFiles({
 }) {
   const [course, setCourse] = useState<CourseStatus>(null);
   const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState<"choose" | "remove" | null>(null);
+  const [working, setWorking] = useState<"choose" | "rescan" | "remove" | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const pending = useRef(false);
   useEffect(() => {
@@ -35,7 +37,7 @@ export function CourseFiles({
       mounted = false;
     };
   }, []);
-  async function change(action: "choose" | "remove") {
+  async function change(action: "choose" | "rescan" | "remove") {
     if (pending.current || busy || loading) return;
     pending.current = true;
     setWorking(action);
@@ -56,6 +58,8 @@ export function CourseFiles({
       setWorking(null);
     }
   }
+  const locked = loading || !!working || busy;
+  const skipped = course?.skipped.reduce((sum, item) => sum + item.count, 0);
   return (
     <main className="files-window">
       <header>
@@ -64,26 +68,92 @@ export function CourseFiles({
           Done
         </button>
       </header>
-      <p>Feed me your course notes. I’ll use them when we learn together.</p>
+      <p className="teacher-note">Course notes I can search during lessons.</p>
       <section className="course-section" aria-busy={loading || !!working}>
-        <h2>Course files</h2>
-        <p className="teacher-note">
-          Choose a folder to upload to OpenAI for lesson search. PDF, slides,
-          docs and text; up to 500 files, 50 MB each.
-        </p>
+        {course ? (
+          <div className="course-folder">
+            <span className="folder-glyph" aria-hidden />
+            <div>
+              <b>{course.folder}</b>
+              <small>
+                {course.files} files
+                {course.bytes ? ` · ${size(course.bytes)}` : ""}
+                {course.updated ? ` · ${when(course.updated)}` : ""}
+              </small>
+            </div>
+            <div className="folder-actions">
+              <button
+                className="quiet-button"
+                disabled={locked || !configured}
+                title="Upload this folder again after editing its files"
+                onClick={() => void change("rescan")}
+              >
+                Re-scan
+              </button>
+              <button
+                className="quiet-button"
+                disabled={locked || !configured}
+                onClick={() => void change("choose")}
+              >
+                Change
+              </button>
+              <button
+                className="quiet-button"
+                disabled={locked}
+                onClick={() => void change("remove")}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            className="course-drop"
+            disabled={locked || !configured}
+            onClick={() => void change("choose")}
+          >
+            <span className="folder-glyph" aria-hidden />
+            <b>Choose a folder</b>
+            <small>PDF, slides, docs, notes, code · 50 MB each</small>
+          </button>
+        )}
         <p className="course-summary" role="status">
           {loading
             ? "Checking your files…"
-            : working === "choose"
-              ? "Choosing, uploading and indexing your folder…"
-              : working === "remove"
-                ? "Removing course files…"
-                : course
-                  ? `${course.folder} · ${course.files} files ready`
-                  : "No files yet"}
+            : working === "remove"
+              ? "Removing…"
+              : working
+                ? "Uploading and indexing…"
+                : ""}
         </p>
         {(working || loading) && (
           <progress aria-label="Updating course files" />
+        )}
+        {!working && course && (!!skipped || !!course.failed) && (
+          <details className="course-skipped">
+            <summary>
+              {[
+                skipped ? `${skipped} skipped` : "",
+                course.failed ? `${course.failed} failed` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </summary>
+            <ul>
+              {course.skipped.map((item) => (
+                <li key={item.reason}>
+                  <span>{item.reason}</span>
+                  <span>{item.count}</span>
+                </li>
+              ))}
+              {!!course.failed && (
+                <li>
+                  <span>OpenAI could not index</span>
+                  <span>{course.failed}</span>
+                </li>
+              )}
+            </ul>
+          </details>
         )}
         {error && (
           <p className="teacher-error" role="alert">
@@ -91,39 +161,23 @@ export function CourseFiles({
           </p>
         )}
         {busy && (
-          <p className="teacher-note">
-            End your lesson before changing course files.
-          </p>
+          <p className="teacher-note">End your lesson to change files.</p>
         )}
         {!configured && (
           <p className="teacher-error">
-            Add your OpenAI key in the local configuration, then restart
-            teachMe.
+            Add your OpenAI key to .env, then restart teachMe.
           </p>
         )}
-        <div className="file-actions">
-          <button
-            className="ask-button"
-            disabled={loading || !!working || busy || !configured}
-            onClick={() => void change("choose")}
-          >
-            {course ? "Change folder" : "Choose folder"}
-          </button>
-          {course && (
-            <button
-              className="quiet-button"
-              disabled={loading || !!working || busy}
-              onClick={() => void change("remove")}
-            >
-              Remove
-            </button>
-          )}
-        </div>
       </section>
-      <p className="teacher-note">
-        Files stay indexed between lessons. Re-choose your folder after editing
-        its contents.
-      </p>
     </main>
   );
 }
+
+const size = (bytes: number) =>
+  bytes >= 1024 * 1024
+    ? `${Math.round(bytes / 1024 / 1024)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+const when = (time: number) => {
+  const days = Math.floor((Date.now() - time) / 86_400_000);
+  return days < 1 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+};

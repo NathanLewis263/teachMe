@@ -51,7 +51,7 @@ export class ActionGate {
       now < this.watchUntil
     );
   }
-  confirmed: "model" | undefined;
+  confirmed: "model" | "learner" | undefined;
   checking = false;
   lastCheck = 0;
   attempts = 0;

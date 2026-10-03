@@ -192,14 +192,16 @@ const preparation = new StepPreparation({
       ignore: teachMeRegions(display),
     };
   },
-  // Hide marks and the board as the normal page capture does, without interrupting narration.
+  // Hide marks during capture while the board and narration stay visible.
   async capture() {
     const display = lessonDisplay;
     if (!display || scrollBusy || actionGate?.checking) return;
     const id = turn;
-    overlay.hide();
-    const ignore = teachMeRegions(display);
+    const revision = preparation.revision;
     try {
+      await hideMarksForCapture();
+      if (id !== turn || revision !== preparation.revision) return;
+      const ignore = teachMeRegions(display);
       const source = await captureDisplay(display, 1600);
       if (id !== turn || !source || source.thumbnail.isEmpty()) return;
       return {
@@ -208,10 +210,7 @@ const preparation = new StepPreparation({
         ignore,
       };
     } finally {
-      if (id === turn && !scrollBusy && !actionGate?.checking) {
-        overlay.showInactive();
-        publishLesson();
-      }
+      if (id === turn) restoreMarks();
       // The screen has settled, so also check the action without waiting for narration to end.
       if (id === turn) setTimeout(() => id === turn && requestEarlyCheck(), 0);
     }
@@ -260,8 +259,47 @@ function clearTracking() {
   scrolledPixels = undefined;
   scrollHidden = false;
 }
+// Frequent captures hide only the marks; hiding the whole overlay made the board flash on every click.
+let marksHidden = false;
+async function hideMarksForCapture() {
+  marksHidden = true;
+  publishLesson();
+  await new Promise((resolve) => setTimeout(resolve, 150));
+}
+function restoreMarks() {
+  marksHidden = false;
+  publishLesson();
+}
+// The board stays on screen during tracking captures, so blank it out of the comparison.
+function maskBoard(pixels: ScreenPixels, display: Electron.Display) {
+  const region = boardRegion;
+  if (!region || !overlay.isVisible()) return pixels;
+  const origin = overlay.getBounds();
+  const scale = pixels.width / display.bounds.width;
+  const left = Math.max(
+    0,
+    Math.floor((origin.x + region.x - display.bounds.x) * scale),
+  );
+  const top = Math.max(
+    0,
+    Math.floor((origin.y + region.y - display.bounds.y) * scale),
+  );
+  const right = Math.min(pixels.width, Math.ceil(left + region.width * scale));
+  const bottom = Math.min(
+    pixels.height,
+    Math.ceil(top + region.height * scale),
+  );
+  for (let y = top; y < bottom; y++)
+    pixels.data.fill(
+      128,
+      (y * pixels.width + left) * 4,
+      (y * pixels.width + right) * 4,
+    );
+  return pixels;
+}
 function visibleAnnotations(): Annotation[] {
-  if (coordinatesInvalid || scrollHidden || !activeLesson) return [];
+  if (coordinatesInvalid || scrollHidden || marksHidden || !activeLesson)
+    return [];
   const marks =
     viewedStep === undefined
       ? lessonAnnotations
@@ -304,22 +342,18 @@ function scheduleScrollTracking() {
       scrollBusy = true;
       scrollCaptures++;
       lastScrollCapture = Date.now();
-      overlay.hide();
       try {
         const display = lessonDisplay;
         const source = await captureDisplay(display, 800);
         if (id !== turn || revision !== scrollRevision) return;
         if (!source || source.thumbnail.isEmpty()) return;
-        scrolledPixels = screenPixels(source.thumbnail);
+        scrolledPixels = maskBoard(screenPixels(source.thumbnail), display);
         scrollHidden = false;
       } catch {
         // Unavailable or ambiguous targets remain hidden.
       } finally {
         scrollBusy = false;
-        if (id === turn) {
-          overlay.showInactive();
-          publishLesson();
-        }
+        if (id === turn) publishLesson();
       }
     },
     Math.max(350, 1000 - (Date.now() - lastScrollCapture)),
@@ -368,6 +402,7 @@ function cancelTeacher(notify = true, forgetHistory = false) {
   actionGate = undefined;
   coordinatesInvalid = false;
   scrollCaptures = 0;
+  marksHidden = false;
   annotationStart = 0;
   automaticChecks = 0;
   clearDisplay();
@@ -414,6 +449,7 @@ function publishLesson() {
     },
     lesson: activeLesson,
     step: viewedStep ?? lessonStep,
+    live: lessonStep,
     turn,
     annotations: visibleAnnotations(),
   });
@@ -637,7 +673,9 @@ app.whenReady().then(() => {
           ? JSON.stringify({
               originalContext: previous,
               completedLesson: completed,
-              confirmation: "model",
+              confirmation: completed.steps.at(-1)?.action?.sensitive
+                ? "learner"
+                : "model",
             })
           : previous,
         course?.vectorStoreId,
@@ -815,11 +853,22 @@ app.whenReady().then(() => {
         properties: ["openDirectory"],
       });
       if (!canceled && filePaths[0]) await indexCourse(filePaths[0]);
+    } else if (action === "rescan") {
+      const current = await loadCourse();
+      if (!current) throw new Error("Choose a course folder first.");
+      await indexCourse(current.folder);
     } else if (action === "remove") await removeCourse();
     else if (action !== "status") throw new Error("Invalid course action");
     const course = await loadCourse();
     return course
-      ? { folder: path.basename(course.folder), files: course.files }
+      ? {
+          folder: path.basename(course.folder),
+          files: course.files,
+          bytes: course.bytes ?? 0,
+          updated: course.updated ?? 0,
+          failed: course.failed ?? 0,
+          skipped: course.skipped ?? [],
+        }
       : null;
   });
   ipcMain.on("board-region", (event, region) => {
@@ -946,8 +995,8 @@ app.whenReady().then(() => {
       index >= activeLesson.steps.length
     )
       return;
-    // Browsing changes the slide, not the speech queue.
-    viewedStep = index;
+    // Browsing changes the slide, not the speech queue. Returning to the live slide follows narration again.
+    viewedStep = index === lessonStep ? undefined : index;
     publishLesson();
   });
   ipcMain.handle("teacher-speech", async (event, id, index) => {
@@ -1102,12 +1151,14 @@ app.whenReady().then(() => {
     coordinatesInvalid = true;
     lessonAnnotations = [];
     const screenRevision = preparation.revision;
-    overlay.hide();
+    const display = lessonDisplay;
     const controlsWereVisible = controls.isVisible();
-    controls.hide();
-    const ignore = teachMeRegions(lessonDisplay);
     try {
-      const display = lessonDisplay;
+      await hideMarksForCapture();
+      signal.throwIfAborted();
+      if (id !== turn || gate !== actionGate) throw new Error("Cancelled");
+      controls.hide();
+      const ignore = teachMeRegions(display);
       const source = await captureDisplay(display, 1600);
       signal.throwIfAborted();
       if (!source || source.thumbnail.isEmpty())
@@ -1151,8 +1202,7 @@ app.whenReady().then(() => {
       };
     } finally {
       if (id === turn) {
-        overlay.showInactive();
-        publishLesson();
+        restoreMarks();
         if (!automatic && controlsWereVisible) controls.show();
       }
     }
@@ -1225,6 +1275,23 @@ app.whenReady().then(() => {
       });
     });
   };
+  // Private steps send no screenshot, so the learner confirms them instead.
+  ipcMain.handle("teacher-confirm", (event, id, index) => {
+    authorize(event);
+    const gate = actionGate;
+    if (
+      !gate ||
+      id !== turn ||
+      gate.turn !== id ||
+      gate.step !== index ||
+      !gate.action.sensitive ||
+      gate.confirmed
+    )
+      return false;
+    gate.confirmed = "learner";
+    resumeLesson?.();
+    return true;
+  });
   ipcMain.handle("teacher-watch", (event, id, index) => {
     authorize(event);
     if (

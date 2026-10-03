@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("teachMe", {
     ipcRenderer.invoke("teacher-source", turn, url),
   watch: (turn: number, index: number) =>
     ipcRenderer.invoke("teacher-watch", turn, index),
+  confirm: (turn: number, index: number) =>
+    ipcRenderer.invoke("teacher-confirm", turn, index),
   check: (turn: number, index: number) =>
     ipcRenderer.invoke("teacher-check", turn, index),
   browse: (turn: number, index: number) =>

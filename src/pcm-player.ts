@@ -3,6 +3,9 @@ export class PcmPlayer {
   private context = new AudioContext({ sampleRate: 24000 });
   private next = 0;
   private stopped = false;
+  private paused = false;
+  private playbackChange = Promise.resolve();
+  private playbackChanges = 0;
   private odd: number | undefined;
   private sources = new Set<AudioBufferSourceNode>();
   private waits = new Map<ReturnType<typeof setTimeout>, () => void>();
@@ -16,8 +19,41 @@ export class PcmPlayer {
     });
     if (this.stopped) throw new Error("Cancelled");
   }
+  // Suspending the context freezes its clock, so queued samples resume where they stopped.
+  get isPaused() {
+    return this.paused;
+  }
+  pause() {
+    return this.changePlayback(true);
+  }
+  resume() {
+    return this.changePlayback(false);
+  }
+  private changePlayback(paused: boolean) {
+    this.playbackChanges++;
+    const change = this.playbackChange
+      .catch(() => {})
+      .then(async () => {
+        try {
+          if (this.stopped) return;
+          await (paused ? this.context.suspend() : this.context.resume());
+          this.paused = paused;
+        } catch (error) {
+          this.paused = this.context.state === "suspended";
+          throw error;
+        } finally {
+          this.playbackChanges--;
+        }
+      });
+    this.playbackChange = change;
+    return change;
+  }
+  private async whilePaused() {
+    while (this.paused || this.playbackChanges) await this.wait(60);
+  }
   async push(bytes: Uint8Array) {
     if (this.stopped) throw new Error("Cancelled");
+    await this.whilePaused();
     if (this.context.state !== "running") {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -52,6 +88,7 @@ export class PcmPlayer {
     }
     for (let offset = 0; offset < bytes.length; offset += 4800) {
       while (this.next - this.context.currentTime > 1) await this.wait(40);
+      await this.whilePaused();
       if (this.stopped || this.context.state !== "running")
         throw new Error("Audio playback was interrupted.");
       const count = Math.min(4800, bytes.length - offset) / 2;
@@ -91,6 +128,7 @@ export class PcmPlayer {
       !this.stopped &&
       (this.sources.size > 0 || this.next + latency > this.context.currentTime)
     ) {
+      await this.whilePaused();
       if (this.context.state !== "running")
         throw new Error("Audio playback was interrupted.");
       await this.wait(30);

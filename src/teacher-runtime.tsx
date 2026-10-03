@@ -35,6 +35,8 @@ export function TeacherRuntime() {
   );
   const actionWait = useRef<(() => void) | undefined>(undefined);
   const [waiting, setWaiting] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const playbackRequest = useRef(0);
   const recorder = useRef<HoldRecorder | null>(null);
   const askRef = useRef<(text: string, voice?: boolean) => void>(() => {});
   // Ignore old IPC replies too; aborting main cannot recall a reply already sent.
@@ -51,6 +53,7 @@ export function TeacherRuntime() {
     setCheckpoint(undefined);
     setChecking(false);
     setWaiting(false);
+    setPaused(false);
     setBusy(false);
     setNarration("");
   }
@@ -122,6 +125,7 @@ export function TeacherRuntime() {
     };
   }, []);
   useEffect(() => {
+    const steps = result?.lesson.steps || [];
     void api().petCommand("bubble", {
       operation: operation.current,
       status,
@@ -133,8 +137,23 @@ export function TeacherRuntime() {
       step,
       sources: result?.lesson.sources || [],
       researchUnavailable: result?.lesson.researchStatus === "unavailable",
+      total: steps.length,
+      paused,
+      done: steps
+        .slice(0, checkpoint ? checkpoint.index : step + 1)
+        .flatMap((item) => (item.action ? [item.action.expectedAction] : [])),
     });
-  }, [status, error, narration, waiting, checking, checkpoint, result, step]);
+  }, [
+    status,
+    error,
+    narration,
+    waiting,
+    checking,
+    checkpoint,
+    result,
+    step,
+    paused,
+  ]);
   async function reveal(plan: PlannedLesson, index: number, id: number) {
     if (id !== operation.current) return;
     const reply = await api().step(plan.turn, index);
@@ -210,6 +229,7 @@ export function TeacherRuntime() {
               player?.stop();
               if (audio.current === player) audio.current = undefined;
               player = undefined;
+              setPaused(false);
             }
           }
           if (id !== operation.current) return;
@@ -219,8 +239,8 @@ export function TeacherRuntime() {
           if (action && id === operation.current) {
             setStatus(
               action.sensitive
-                ? "Private step. Screen checks are off. Ask again when ready."
-                : "Watching for the result of this step",
+                ? "Screen checks are off for this step"
+                : "Watching your screen",
             );
             setCheckpoint({ turn: plan.turn, index, action });
             await new Promise<void>((resolve) => {
@@ -231,7 +251,7 @@ export function TeacherRuntime() {
                 .catch(() => {
                   if (id === operation.current)
                     setStatus(
-                      "Automatic checking unavailable. Try Check screen or ask again.",
+                      "Automatic checking unavailable. Try Check now or ask again.",
                     );
                 });
             });
@@ -286,6 +306,7 @@ export function TeacherRuntime() {
     if (id === operation.current) {
       pending.current = false;
       setBusy(false);
+      setPaused(false);
       setStatus("Ready");
     }
   }
@@ -316,8 +337,40 @@ export function TeacherRuntime() {
   const bubbleAction = useRef<
     (action: string, url?: string, visibleStep?: number) => void
   >(() => {});
+  async function confirmPrivateStep() {
+    if (!checkpoint?.action.sensitive) return;
+    const id = operation.current;
+    const confirmed = await api()
+      .confirm(checkpoint.turn, checkpoint.index)
+      .catch(() => false);
+    if (confirmed && id === operation.current) actionWait.current?.();
+  }
+  async function setPlayback(pause: boolean) {
+    const player = audio.current;
+    if (!player) return;
+    const id = operation.current;
+    const request = ++playbackRequest.current;
+    setPaused(pause);
+    await (pause ? player.pause() : player.resume()).catch(() => {
+      if (
+        id !== operation.current ||
+        audio.current !== player ||
+        request !== playbackRequest.current
+      )
+        return;
+      setPaused(player.isPaused);
+      setError("Audio playback could not change. Try again or end the lesson.");
+    });
+  }
   bubbleAction.current = (action, url, visibleStep) => {
-    if (["continue", "check"].includes(action) && visibleStep !== step) return;
+    if (
+      ["continue", "check", "confirm"].includes(action) &&
+      visibleStep !== step
+    )
+      return;
+    if (action === "pause") void setPlayback(true);
+    if (action === "resume") void setPlayback(false);
+    if (action === "confirm") void confirmPrivateStep();
     if (action === "source" && result && url)
       void api()
         .openSource(result.turn, url)

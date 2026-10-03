@@ -12,6 +12,14 @@ import {
   type LessonFrame,
 } from "./lesson";
 
+const sourceHost = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
+
 function Stroke({
   a,
   index,
@@ -136,7 +144,7 @@ function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
         const y = 14 + index * 66,
           number = first + index + 1,
           current = number === step + 1,
-          color = current ? accent : "#9fb4b8";
+          color = current ? accent : "#8fa4a7";
         return (
           <g key={number} className="lesson-part" opacity={current ? 1 : 0.72}>
             {index > 0 && (
@@ -159,9 +167,9 @@ function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
               width="488"
               height="52"
               rx="14"
-              fill={current ? accent : "#ffffff"}
-              fillOpacity={current ? 0.08 : 0.025}
-              stroke={current ? accent : "#ffffff22"}
+              fill={current ? accent : "#203c40"}
+              fillOpacity={current ? 0.07 : 0.025}
+              stroke={current ? accent : "#203c401f"}
               strokeOpacity={current ? 0.7 : 1}
             />
             <circle
@@ -176,7 +184,7 @@ function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
               y={y + 26}
               textAnchor="middle"
               dominantBaseline="central"
-              fill={current ? "#10242a" : "#dfe9e8"}
+              fill={current ? "#ffffff" : "#203c40"}
               fontSize="12"
               fontWeight="700"
             >
@@ -186,7 +194,7 @@ function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
               x="114"
               y={item.detail ? y + 21 : y + 26}
               dominantBaseline="central"
-              fill={current ? "#f1f5f4" : "#c9d6d7"}
+              fill={current ? "#203c40" : "#587074"}
               fontSize="15"
               fontWeight="600"
             >
@@ -197,7 +205,7 @@ function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
                 x="114"
                 y={y + 38}
                 dominantBaseline="central"
-                fill="#a9bec1"
+                fill="#6b8185"
                 fontSize="11.5"
               >
                 {item.detail}
@@ -493,47 +501,67 @@ export function Overlay() {
               <button
                 onClick={() => browse(lesson.step - 1)}
                 disabled={lesson.step === 0}
+                aria-label="Previous slide"
               >
-                ← Previous
+                ‹
               </button>
-              <span>
-                Slide {lesson.step + 1} of {lesson.lesson.steps.length}
+              <div className="board-rail">
+                {lesson.lesson.steps.map((_, index) => {
+                  const live = lesson.live ?? lesson.step;
+                  return (
+                    <button
+                      key={index}
+                      className={
+                        index === live
+                          ? "live"
+                          : index < live
+                            ? "spoken"
+                            : undefined
+                      }
+                      aria-current={index === lesson.step ? "step" : undefined}
+                      aria-label={`Slide ${index + 1} of ${lesson.lesson.steps.length}${index === live ? ", playing" : ""}`}
+                      onClick={() => browse(index)}
+                    />
+                  );
+                })}
+              </div>
+              <span className="board-count">
+                {lesson.step + 1} / {lesson.lesson.steps.length}
               </span>
               <button
                 onClick={() => browse(lesson.step + 1)}
                 disabled={lesson.step === lesson.lesson.steps.length - 1}
+                aria-label="Next slide"
               >
-                Next →
+                ›
               </button>
             </nav>
-            {!!lesson.lesson.sources?.length && (
-              <details className="lesson-sources">
-                <summary>Web sources</summary>
-                <ul>
-                  {lesson.lesson.sources.map((source) => (
-                    <li key={source.url}>
-                      <button
-                        onClick={() =>
-                          void window.teachMe
-                            .openSource(lesson.turn, source.url)
-                            .catch(() => {})
-                        }
-                      >
-                        {source.title}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            <footer className="lesson-progress">
-              {lesson.lesson.steps.map((_, index) => (
-                <i
-                  key={index}
-                  className={index <= lesson.step ? "shown" : ""}
-                />
-              ))}
-            </footer>
+            {(lesson.live !== undefined && lesson.live !== lesson.step) ||
+            !!lesson.lesson.sources?.length ? (
+              <footer className="board-chips">
+                {lesson.live !== undefined && lesson.live !== lesson.step && (
+                  <button
+                    className="board-live"
+                    onClick={() => browse(lesson.live!)}
+                  >
+                    Back to live
+                  </button>
+                )}
+                {lesson.lesson.sources?.map((source) => (
+                  <button
+                    key={source.url}
+                    title={source.title}
+                    onClick={() =>
+                      void window.teachMe
+                        .openSource(lesson.turn, source.url)
+                        .catch(() => {})
+                    }
+                  >
+                    ↗ {sourceHost(source.url)}
+                  </button>
+                ))}
+              </footer>
+            ) : null}
           </section>
         )}
     </>

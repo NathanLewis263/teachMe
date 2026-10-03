@@ -176,7 +176,9 @@ export function createPet(
       }
       if (
         intent.operation !== bubble?.operation ||
-        !["continue", "check", "source"].includes(intent.action || "")
+        !["continue", "check", "source", "pause", "resume", "confirm"].includes(
+          intent.action || "",
+        )
       )
         return;
       controls.webContents.send("teacher-bubble-action", intent);

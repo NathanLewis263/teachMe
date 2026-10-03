@@ -14,7 +14,14 @@ export type RoutedLessonRequest = Omit<LessonRequest, "mode" | "context"> & {
   mode: RenderChoice;
   context: ContextChoice;
 };
-export type CourseStatus = { folder: string; files: number } | null;
+export type CourseStatus = {
+  folder: string;
+  files: number;
+  bytes: number;
+  updated: number;
+  failed: number;
+  skipped: { reason: string; count: number }[];
+} | null;
 export type PlannedLesson = {
   turn: number;
   lesson: Lesson;
@@ -46,7 +53,10 @@ export interface AppBridge {
     elevenlabs: boolean;
     voice: boolean;
   }>;
-  course(action: "status" | "choose" | "remove"): Promise<CourseStatus>;
+  course(
+    action: "status" | "choose" | "rescan" | "remove",
+  ): Promise<CourseStatus>;
+  confirm(turn: number, index: number): Promise<boolean>;
   plan(request: LessonRequest): Promise<PlannedLesson>;
   speech(
     turn: number,
@@ -66,4 +76,9 @@ export type PetBubble = {
   checkpoint?: import("./action-checkpoint").ActionCheckpoint;
   sources: NonNullable<Lesson["sources"]>;
   researchUnavailable?: boolean;
+  // Steps received so far; the count grows while the lesson generates.
+  total: number;
+  paused: boolean;
+  // Earlier guided actions in this lesson, oldest first.
+  done: string[];
 };
