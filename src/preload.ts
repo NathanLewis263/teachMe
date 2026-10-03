@@ -1,16 +1,36 @@
 import { contextBridge, ipcRenderer } from "electron";
 // Expose a small bridge instead of giving React access to Electron.
 contextBridge.exposeInMainWorld("teachMe", {
-  realtimeStatus: () => ipcRenderer.invoke("realtime-status"),
-  connect: (offer: string) => ipcRenderer.invoke("realtime-connect", offer),
-  begin: () => ipcRenderer.invoke("realtime-begin"),
-  draw: (turn: number, scene: unknown) => ipcRenderer.invoke("realtime-draw", turn, scene),
-  lesson: (turn: number, lesson: unknown) => ipcRenderer.invoke("realtime-lesson", turn, lesson),
-  step: (turn: number, index: number) => ipcRenderer.invoke("realtime-step", turn, index),
-  capture: (turn: number, maxBytes: number) => ipcRenderer.invoke("realtime-capture", turn, maxBytes),
+  browse: (turn: number, index: number) =>
+    ipcRenderer.invoke("board-browse", turn, index),
+  boardRegion: (region: unknown) => ipcRenderer.send("board-region", region),
+  petCommand: (command: string, value?: unknown) =>
+    ipcRenderer.invoke("pet-command", command, value),
+  transcribe: (bytes: Uint8Array) =>
+    ipcRenderer.invoke("voice-transcribe", bytes),
+  teacherStatus: () => ipcRenderer.invoke("teacher-status"),
+  displays: () => ipcRenderer.invoke("displays"),
+  plan: (request: unknown) => ipcRenderer.invoke("teacher-plan", request),
+  stopSpeech: (turn: number) => ipcRenderer.invoke("teacher-speech-stop", turn),
+  speech: (turn: number, step: number) =>
+    ipcRenderer.invoke("teacher-speech", turn, step),
+  step: (turn: number, index: number) =>
+    ipcRenderer.invoke("teacher-step", turn, index),
   action: (action: string) => ipcRenderer.invoke("action", action),
   subscribe: (channel: string, callback: (value: unknown) => void) => {
-    if (!["state", "drawing", "explanation", "lesson"].includes(channel))
+    if (
+      ![
+        "pet-state",
+        "pet-level",
+        "pet-direction",
+        "voice-hold",
+        "teacher-progress",
+        "teacher-segment",
+        "teacher-cancel",
+        "lesson-clear",
+        "lesson",
+      ].includes(channel)
+    )
       throw new Error("Invalid channel");
     const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
       callback(value);

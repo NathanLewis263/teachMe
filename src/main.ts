@@ -1,53 +1,120 @@
-import { app, BrowserWindow, ipcMain, screen, session, desktopCapturer, systemPreferences } from "electron";
+import { createPet } from "./pet-desktop";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  screen,
+  session,
+  desktopCapturer,
+  systemPreferences,
+  globalShortcut,
+} from "electron";
 import path from "node:path";
 import { encodeScreen } from "./capture";
 import { existsSync } from "node:fs";
-import {
-  Annotation,
-  isAction,
-  Phase,
-  validAnnotation,
-  shapeKinds,
-  ShapeKind,
-} from "./contracts";
-import { realtimeConfig, validScene } from "./realtime-config";
+import type { Annotation } from "./contracts";
 
 // Keep the API key here, outside React. Terminal settings override .env.
 const envPath = path.join(app.getAppPath(), ".env");
 if (existsSync(envPath)) process.loadEnvFile(envPath);
 
-import { validLesson, applyDrawingStep, type Lesson } from "./lesson";
+import { applyDrawingStep, type Lesson } from "./lesson";
 
+import { speechModel, planLesson } from "./providers";
+import { speechChunks } from "./speech-stream";
+import type { LessonRequest } from "./teacher-types";
+let providerAbort = new AbortController();
+let screenTurn = false;
+let viewedStep: number | undefined;
+let boardRegion: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  dragging: boolean;
+} | null = null;
+let lessonDisplay: Electron.Display | undefined;
+let screenDeadline = 0;
+let expiry: ReturnType<typeof setTimeout> | undefined;
+const spoken = new Set<number>();
+let speechAbort = new AbortController();
+let speech:
+  | { index: number; chunks: AsyncGenerator<Uint8Array>; pulling: boolean }
+  | undefined;
+// A new turn invalidates late provider replies as well as visible marks.
+function cancelTeacher(notify = true) {
+  providerAbort.abort();
+  speechAbort.abort();
+  void speech?.chunks.return(undefined).catch(() => {});
+  speech = undefined;
+  providerAbort = new AbortController();
+  clearTimeout(expiry);
+  spoken.clear();
+  turn++;
+  activeLesson = undefined;
+  viewedStep = undefined;
+  boardRegion = null;
+  screenTurn = false;
+  overlay.webContents.send("lesson-clear");
+  if (notify) controls.webContents.send("teacher-cancel");
+}
 let activeLesson: Lesson | undefined;
 let lessonStep = -1;
 let lessonAnnotations: Annotation[] = [];
 let turn = 0;
-let connecting = false;
 let controls: BrowserWindow;
 let overlay: BrowserWindow;
-let phase: Phase = "idle";
 
-function send(annotations: Annotation[] = []) {
-  controls.webContents.send("state", { phase });
-  overlay.webContents.send("drawing", annotations.filter(validAnnotation));
-}
-app.whenReady().then(() => {
-  session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
-    callback(wc === controls?.webContents && permission === "media" &&
-      "mediaTypes" in details && details.mediaTypes?.length === 1 && details.mediaTypes[0] === "audio");
+function publishLesson() {
+  if (!activeLesson || lessonStep < 0 || !lessonDisplay) return;
+  const content = overlay.getContentBounds();
+  const target = lessonDisplay.bounds;
+  overlay.webContents.send("lesson", {
+    viewport: {
+      x: target.x - content.x,
+      y: target.y - content.y,
+      width: target.width,
+      height: target.height,
+    },
+    lesson: activeLesson,
+    step: viewedStep ?? lessonStep,
+    turn,
+    annotations: lessonAnnotations,
   });
-  session.defaultSession.setPermissionCheckHandler((wc, permission, _origin, details) =>
-    wc === controls?.webContents && permission === "media" && details.mediaType === "audio");
+}
+
+app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler(
+    (wc, permission, callback, details) => {
+      callback(
+        wc === controls?.webContents &&
+          permission === "media" &&
+          "mediaTypes" in details &&
+          details.mediaTypes?.length === 1 &&
+          details.mediaTypes[0] === "audio",
+      );
+    },
+  );
+  session.defaultSession.setPermissionCheckHandler(
+    (wc, permission, _origin, details) =>
+      wc === controls?.webContents &&
+      permission === "media" &&
+      details.mediaType === "audio",
+  );
   const display = screen.getPrimaryDisplay();
   const preferences = {
     preload: path.join(__dirname, "preload.js"),
     contextIsolation: true,
     sandbox: true,
     nodeIntegration: false,
+    backgroundThrottling: false,
   };
   overlay = new BrowserWindow({
     ...display.bounds,
     transparent: true,
+    backgroundColor: "#00000000",
+    enableLargerThanScreen: true,
+    skipTaskbar: true,
     frame: false,
     focusable: false,
     alwaysOnTop: true,
@@ -57,9 +124,14 @@ app.whenReady().then(() => {
   // Draw above the desktop while passing clicks to the student's apps.
   overlay.setIgnoreMouseEvents(true, { forward: true });
   overlay.setAlwaysOnTop(true, "floating");
+  overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   controls = new BrowserWindow({
+    show: false,
     width: 390,
-    height: Math.min(740, display.workArea.height - 60),
+    height: Math.min(420, display.workArea.height - 60),
+    minWidth: 340,
+    minHeight: 360,
+    backgroundColor: "#f2f6f5",
     x: display.workArea.x + display.workArea.width - 410,
     y: display.workArea.y + 30,
     alwaysOnTop: true,
@@ -73,94 +145,281 @@ app.whenReady().then(() => {
     query: { overlay: "true" },
   });
   void controls.loadFile(path.join(__dirname, "index.html"));
-  controls.on("closed", () => app.quit());
+  let quitting = false;
+  app.on("before-quit", () => {
+    quitting = true;
+    providerAbort.abort();
+    speechAbort.abort();
+  });
+  controls.on("close", (event) => {
+    if (!quitting) {
+      event.preventDefault();
+      controls.hide();
+    }
+  });
+  const pet = createPet(controls, cancelTeacher);
   const authorize = (event: Electron.IpcMainInvokeEvent) => {
-    if (event.sender !== controls.webContents || event.senderFrame !== controls.webContents.mainFrame)
+    if (
+      event.sender !== controls.webContents ||
+      event.senderFrame !== controls.webContents.mainFrame
+    )
       throw new Error("Invalid sender");
   };
-  ipcMain.handle("realtime-status", (event) => {
+  globalShortcut.register("CommandOrControl+Shift+Escape", pet.cancel);
+  screen.on("display-metrics-changed", () => cancelTeacher());
+  screen.on("display-removed", () => cancelTeacher());
+  ipcMain.handle("teacher-status", (event) => {
     authorize(event);
-    return { configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1" };
+    return {
+      openai: !!process.env.OPENAI_API_KEY,
+      elevenlabs: !!process.env.ELEVENLABS_API_KEY,
+      voice: !!process.env.ELEVENLABS_VOICE_ID,
+    };
   });
-  ipcMain.handle("realtime-connect", async (event, offer: unknown) => {
+  ipcMain.handle("displays", (event) => {
     authorize(event);
-    if (typeof offer !== "string" || !offer.startsWith("v=0") || offer.length > 100_000)
-      throw new Error("Invalid connection offer");
-    if (connecting) throw new Error("A connection is already starting");
-    const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error("Set OPENAI_API_KEY in your terminal, then restart teachMe.");
-    connecting = true;
-    try {
-      const form = new FormData();
-      form.set("sdp", offer);
-      form.set("session", JSON.stringify(realtimeConfig(process.env.OPENAI_REALTIME_MODEL, process.env.OPENAI_REALTIME_VOICE)));
-      const response = await fetch("https://api.openai.com/v1/realtime/calls", {
-        method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form,
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!response.ok) throw new Error(`OpenAI connection failed (${response.status}). Check your API key, model access and API billing.`);
-      return await response.text();
-    } finally { connecting = false; }
+    return screen.getAllDisplays().map((d) => ({
+      id: d.id,
+      name: d.label || `Display ${d.id}`,
+    }));
   });
-  ipcMain.handle("realtime-begin", (event) => {
+  ipcMain.handle("teacher-plan", async (event, request: LessonRequest) => {
     authorize(event);
-    turn += 1;
-    activeLesson = undefined;
-    send();
-    const bounds = screen.getPrimaryDisplay().bounds;
-    overlay.setBounds(bounds);
-    return { turn, width: bounds.width, height: bounds.height };
-  });
-  ipcMain.handle("realtime-draw", (event, id: unknown, scene: unknown) => {
-    authorize(event);
-    if (id !== turn) return { ok: false, error: "This question was cancelled." };
-    if (!validScene(scene)) return { ok: false, error: "Invalid diagram. Use at most 32 shapes, bounded 0..1 coordinates, and valid M/L/Q/C/Z paths." };
-    send(scene.annotations);
-    return { ok: true };
-  });
-  ipcMain.handle("realtime-lesson", (event, id: unknown, lesson: unknown) => {
-    authorize(event);
-    if (id !== turn) return { ok: false, error: "Question cancelled" };
-    if (!validLesson(lesson)) return { ok: false, error: "Invalid lesson. Supply 1-12 spoken steps. Scenes need valid named nodes and attached links; notes need written content; flow needs labels." };
-    activeLesson = lesson;
+    if (
+      !request ||
+      !Number.isSafeInteger(request.requestId) ||
+      typeof request.question !== "string" ||
+      !request.question.trim() ||
+      request.question.length > 8000 ||
+      typeof request.includeScreen !== "boolean" ||
+      !["screen", "whiteboard"].includes(request.mode) ||
+      (request.mode === "screen" && !request.includeScreen)
+    )
+      throw new Error("Invalid lesson request");
+    const display =
+      request.displayId === 0
+        ? screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+        : screen.getAllDisplays().find((d) => d.id === request.displayId);
+    if (!display) throw new Error("Select an available display.");
+    const previous = activeLesson
+      ? JSON.stringify(activeLesson).slice(0, 16000)
+      : "";
+    cancelTeacher(false);
+    const id = turn;
+    const signal = providerAbort.signal;
+    // Electron bounds are logical pixels; the drawing layer uses screenshot fractions.
+    lessonDisplay = display;
+    overlay.setBounds(display.bounds);
+    overlay.showInactive();
+    controls.webContents.send(
+      "teacher-progress",
+      request.includeScreen ? "Capturing" : "Thinking",
+    );
+    const capturedAt = Date.now();
+    let image: string | undefined;
+    if (request.includeScreen) {
+      if (
+        process.platform === "darwin" &&
+        systemPreferences.getMediaAccessStatus("screen") === "denied"
+      )
+        throw new Error(
+          "Enable Screen Recording for Electron in System Settings, then restart.",
+        );
+      // Keep the previous whiteboard out of the new reference image.
+      overlay.hide();
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ["screen"],
+          thumbnailSize: {
+            width: 1600,
+            height: Math.round(
+              (1600 * display.size.height) / display.size.width,
+            ),
+          },
+        });
+        if (id !== turn) throw new Error("Cancelled");
+        const source = sources.find((s) => s.display_id === String(display.id));
+        if (!source || source.thumbnail.isEmpty())
+          throw new Error(
+            "Screen capture unavailable. Check Screen Recording permission.",
+          );
+        image = encodeScreen(source.thumbnail, 1024 * 1024);
+      } finally {
+        if (id === turn && !overlay.isDestroyed()) overlay.showInactive();
+      }
+    }
+    if (id !== turn) throw new Error("Cancelled");
+    controls.webContents.send("teacher-progress", "Planning");
     lessonStep = -1;
     lessonAnnotations = [];
-    return { ok: true };
+    screenTurn = request.mode === "screen";
+    screenDeadline = capturedAt + 120_000;
+    if (screenTurn)
+      expiry = setTimeout(
+        cancelTeacher,
+        Math.max(0, screenDeadline - Date.now()),
+      );
+    const result = await planLesson(
+      request,
+      image,
+      previous,
+      signal,
+      (lesson) => {
+        if (id !== turn || signal.aborted) return;
+        activeLesson = lesson;
+        publishLesson();
+        controls.webContents.send("teacher-segment", {
+          requestId: request.requestId,
+          turn: id,
+          lesson,
+        });
+      },
+    );
+    if (id !== turn) throw new Error("Cancelled");
+    return { turn: id, ...result };
   });
-  ipcMain.handle("realtime-step", (event, id: unknown, index: unknown) => {
+  ipcMain.on("board-region", (event, region) => {
+    if (
+      event.sender !== overlay.webContents ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      return;
+    if (region === null) {
+      boardRegion = null;
+      return;
+    }
+    if (
+      !region ||
+      ![region.x, region.y, region.width, region.height].every(
+        Number.isFinite,
+      ) ||
+      region.width <= 0 ||
+      region.height <= 0 ||
+      typeof region.dragging !== "boolean"
+    )
+      return;
+    boardRegion = region;
+  });
+  let interactive = false;
+  const hitTest = setInterval(() => {
+    if (overlay.isDestroyed()) return;
+    const point = screen.getCursorScreenPoint();
+    const bounds = overlay.getBounds();
+    const r = boardRegion;
+    const inside =
+      !!r &&
+      !!activeLesson &&
+      !screenTurn &&
+      (r.dragging ||
+        (point.x >= bounds.x + r.x &&
+          point.x <= bounds.x + r.x + r.width &&
+          point.y >= bounds.y + r.y &&
+          point.y <= bounds.y + r.y + r.height));
+    if (inside !== interactive) {
+      interactive = inside;
+      overlay.setIgnoreMouseEvents(!inside, { forward: true });
+    }
+  }, 50);
+  hitTest.unref();
+  overlay.once("closed", () => clearInterval(hitTest));
+  ipcMain.handle("board-browse", (event, id, index) => {
+    if (
+      event.sender !== overlay.webContents ||
+      event.senderFrame !== event.sender.mainFrame ||
+      id !== turn ||
+      !activeLesson ||
+      screenTurn ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= activeLesson.steps.length
+    )
+      return;
+    // Browsing changes the slide, not the speech queue.
+    viewedStep = index;
+    publishLesson();
+  });
+  ipcMain.handle("teacher-speech", async (event, id, index) => {
     authorize(event);
-    if (id !== turn || !activeLesson || typeof index !== "number" || index !== lessonStep + 1 || index >= activeLesson.steps.length)
+    if (
+      id !== turn ||
+      !activeLesson ||
+      !Number.isInteger(index) ||
+      !activeLesson.steps[index]
+    )
+      throw new Error("Stale speech request");
+    if (!speech) {
+      if (spoken.has(index) || index !== lessonStep + 1)
+        throw new Error("Repeated speech request");
+      spoken.add(index);
+      speechAbort = new AbortController();
+      speech = {
+        index,
+        pulling: false,
+        chunks: speechChunks(
+          activeLesson.steps[index].say,
+          AbortSignal.any([providerAbort.signal, speechAbort.signal]),
+          speechModel(),
+        ),
+      };
+    }
+    const current = speech;
+    if (current.index !== index || current.pulling)
+      throw new Error("Out-of-order speech request");
+    current.pulling = true;
+    try {
+      const chunk = await current.chunks.next();
+      if (id !== turn || speech !== current) throw new Error("Cancelled");
+      if (chunk.done) speech = undefined;
+      return { done: !!chunk.done, audio: chunk.value };
+    } catch (error) {
+      if (speech === current) {
+        speechAbort.abort();
+        speech = undefined;
+      }
+      throw error;
+    } finally {
+      current.pulling = false;
+    }
+  });
+  ipcMain.handle("teacher-speech-stop", (event, id) => {
+    authorize(event);
+    if (id !== turn) return;
+    speechAbort.abort();
+    void speech?.chunks.return(undefined).catch(() => {});
+    speech = undefined;
+  });
+  ipcMain.handle("teacher-step", (event, id: unknown, index: unknown) => {
+    authorize(event);
+    if (
+      id !== turn ||
+      !activeLesson ||
+      typeof index !== "number" ||
+      index !== lessonStep + 1 ||
+      index >= activeLesson.steps.length
+    )
       return { ok: false, error: "Stale lesson step" };
+    if (screenTurn && Date.now() > screenDeadline) {
+      cancelTeacher();
+      return {
+        ok: false,
+        error: "Screenshot expired. Ask again for a fresh capture.",
+      };
+    }
+    overlay.showInactive();
     lessonStep = index;
-    lessonAnnotations = applyDrawingStep(lessonAnnotations, activeLesson.steps[index]);
-    overlay.webContents.send("lesson", { lesson: activeLesson, step: index, annotations: lessonAnnotations });
+    lessonAnnotations = applyDrawingStep(
+      lessonAnnotations,
+      activeLesson.steps[index],
+    );
+    publishLesson();
     return { ok: true };
-  });
-  ipcMain.handle("realtime-capture", async (event, id: unknown, maxBytes: unknown) => {
-    authorize(event);
-    if (id !== turn) throw new Error("Question cancelled");
-    if (process.platform === "darwin" && systemPreferences.getMediaAccessStatus("screen") === "denied")
-      throw new Error("Enable Screen Recording for teachMe or Electron in macOS System Settings, then restart.");
-    if (typeof maxBytes !== "number" || !Number.isInteger(maxBytes) || maxBytes < 8192 || maxBytes > 1024 * 1024)
-      throw new Error("Invalid screenshot size budget");
-    const display = screen.getPrimaryDisplay();
-    const sources = await desktopCapturer.getSources({ types: ["screen"],
-      thumbnailSize: { width: 1600, height: Math.round(1600 * display.size.height / display.size.width) } });
-    if (id !== turn) throw new Error("Question cancelled");
-    const source = sources.find(source => source.display_id === String(display.id));
-    if (!source || source.thumbnail.isEmpty()) throw new Error("Screen capture unavailable. Check macOS Screen Recording permission.");
-    return encodeScreen(source.thumbnail, maxBytes);
   });
   ipcMain.handle("action", (event, action: unknown) => {
     authorize(event);
-    if (!isAction(action)) throw new Error("Invalid action");
-    if (action === "clear") { turn += 1; activeLesson = undefined; phase = "idle"; send(); }
-    else if (action === "press") { phase = "listening"; send(); }
-    else if (action === "release") { phase = "explaining"; controls.webContents.send("state", { phase }); }
-    else if (shapeKinds.includes(action as ShapeKind)) {
-      phase = "explaining";
-      send([{ kind: action as ShapeKind, x: 0.35, y: 0.3, width: 0.25, height: 0.3 }]);
-    }
+    if (action !== "clear") throw new Error("Invalid action");
+    pet.cancel();
   });
 });
 app.on("window-all-closed", () => app.quit());
+
+app.on("will-quit", () => globalShortcut.unregisterAll());

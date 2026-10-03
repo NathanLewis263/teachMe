@@ -1,0 +1,177 @@
+import { globalVoice } from "./global-voice";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  systemPreferences,
+  Tray,
+} from "electron";
+import path from "node:path";
+
+export function createPet(controls: BrowserWindow, stop: () => void) {
+  const size = { width: 220, height: 168 };
+  const area = screen.getPrimaryDisplay().workArea;
+  const pet = new BrowserWindow({
+    ...size,
+    x: area.x + area.width - size.width - 30,
+    y: area.y + area.height - size.height,
+    transparent: true,
+    backgroundColor: "#00000000",
+    frame: false,
+    hasShadow: false,
+    resizable: false,
+    focusable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  });
+  pet.setIgnoreMouseEvents(true, { forward: true });
+  pet.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  pet.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  pet.webContents.on("will-navigate", (e) => e.preventDefault());
+  void pet.loadFile(path.join(__dirname, "index.html"), {
+    query: { pet: "true" },
+  });
+  let state = "Ready",
+    detail = "Hold Control–Shift to talk. Right-click the seal for its menu.";
+  let roaming = true,
+    hovered = false,
+    dragging = false,
+    direction = -1;
+  let tray: Tray;
+  const showState = (value: string, message?: string) => {
+    state = value;
+    if (message) detail = message;
+    pet.webContents.send("pet-state", state);
+    tray?.setToolTip(`teachMe: ${message || state}`);
+  };
+  const clamp = () => {
+    const b = pet.getBounds(),
+      a = screen.getDisplayMatching(b).workArea;
+    pet.setPosition(
+      Math.round(Math.max(a.x, Math.min(b.x, a.x + a.width - b.width))),
+      Math.round(Math.max(a.y, Math.min(b.y, a.y + a.height - b.height))),
+    );
+  };
+  const voice = globalVoice(controls, stop, showState);
+  controls.webContents.once("did-finish-load", () => voice.restore());
+  const cancel = () => {
+    voice.cancel();
+    showState("Ready");
+  };
+  const openControls = () => {
+    controls.show();
+    controls.focus();
+  };
+  const menu = () =>
+    Menu.buildFromTemplate([
+      { label: "Stop & clear", click: cancel },
+      {
+        label: "Wander",
+        type: "checkbox",
+        checked: roaming,
+        click: (item) => {
+          roaming = item.checked;
+        },
+      },
+      {
+        label: "Move seal to pointer",
+        click: () => {
+          roaming = false;
+          const p = screen.getCursorScreenPoint();
+          pet.setPosition(p.x - 110, p.y - 84);
+          clamp();
+        },
+      },
+      { label: "Teaching controls…", click: openControls },
+      { label: "Enable voice permissions…", click: () => void voice.enable() },
+      {
+        label: "Status…",
+        click: () => void dialog.showMessageBox({ message: state, detail }),
+      },
+      { type: "separator" },
+      { label: "Quit teachMe", click: () => app.quit() },
+    ]);
+  const icon = nativeImage.createFromDataURL(
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+  );
+  tray = new Tray(icon);
+  tray.setTitle("🦭");
+  tray.setToolTip("teachMe");
+  tray.on("click", () => tray.popUpContextMenu(menu()));
+  tray.on("right-click", () => tray.popUpContextMenu(menu()));
+  ipcMain.handle("pet-command", (event, command: unknown, value: unknown) => {
+    if (event.senderFrame !== event.sender.mainFrame) return;
+    const isPet = event.sender === pet.webContents;
+    if (!isPet && event.sender !== controls.webContents) return;
+    if (command === "state" && !isPet && typeof value === "string")
+      showState(value);
+    if (command === "error" && !isPet && typeof value === "string")
+      showState("Error", value);
+    if (
+      command === "level" &&
+      !isPet &&
+      typeof value === "number" &&
+      Number.isFinite(value)
+    )
+      pet.webContents.send("pet-level", Math.max(0, Math.min(1, value)));
+    if (command === "close-controls" && !isPet) controls.hide();
+    if (command === "show-controls" && !isPet) controls.showInactive();
+    if (!isPet) return;
+    if (command === "ready") showState(state);
+    if (command === "menu") menu().popup({ window: pet });
+    if (command === "hover" && typeof value === "boolean") {
+      hovered = value;
+      pet.setIgnoreMouseEvents(!value, { forward: true });
+    }
+    if (command === "drag" && typeof value === "boolean") {
+      dragging = value;
+      if (value) roaming = false;
+    }
+    if (
+      command === "move" &&
+      dragging &&
+      Array.isArray(value) &&
+      value.length === 2 &&
+      value.every((n) => Number.isFinite(n) && Math.abs(n) < 1000)
+    ) {
+      const [x, y] = pet.getPosition();
+      pet.setPosition(Math.round(x + value[0]), Math.round(y + value[1]));
+      clamp();
+    }
+  });
+  const timer = setInterval(() => {
+    if (
+      pet.isDestroyed() ||
+      systemPreferences.getAnimationSettings().prefersReducedMotion ||
+      !roaming ||
+      hovered ||
+      dragging ||
+      state !== "Ready"
+    )
+      return;
+    const b = pet.getBounds(),
+      a = screen.getDisplayMatching(b).workArea;
+    if (b.x <= a.x + 8) direction = 1;
+    if (b.x + b.width >= a.x + a.width - 8) direction = -1;
+    pet.setPosition(b.x + direction, b.y);
+    pet.webContents.send("pet-direction", direction);
+    clamp();
+  }, 70);
+  screen.on("display-metrics-changed", clamp);
+  screen.on("display-removed", clamp);
+  app.on("before-quit", () => {
+    clearInterval(timer);
+    tray.destroy();
+  });
+  return { cancel };
+}
