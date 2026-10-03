@@ -27,6 +27,14 @@ import path from "node:path";
 import { encodeScreen } from "./capture";
 import { existsSync } from "node:fs";
 import type { Annotation } from "./contracts";
+import {
+  adoptPrepared,
+  StepPreparation,
+  type PreparedPage,
+  PreparedSpeech,
+  type ScreenRegion,
+  type ScreenSample,
+} from "./step-preparation";
 
 // Keep the API key here, outside React. Terminal settings override .env.
 const envPath = path.join(app.getAppPath(), ".env");
@@ -51,6 +59,7 @@ let checkAbort = new AbortController();
 let autoCheckTimer: ReturnType<typeof setTimeout> | undefined;
 let automaticChecks = 0;
 let requestAutomaticCheck: () => void = () => {};
+let requestEarlyCheck: () => void = () => {};
 let resumeLesson: (() => void) | undefined;
 let annotationStart = 0;
 // A checkpoint can finish before generation returns, or while this wait is active.
@@ -82,6 +91,143 @@ function waitForAction(id: number, index: number, signal: AbortSignal) {
 function resumeAutomaticCheck() {
   if (actionGate?.resume()) requestAutomaticCheck();
 }
+// The planning loop exposes its next request only while it waits for this checkpoint.
+let nextPage:
+  | {
+      turn: number;
+      step: number;
+      plan: (
+        image: string,
+        signal: AbortSignal,
+        segment: (lesson: Lesson) => void,
+      ) => Promise<{ lesson: Lesson }>;
+    }
+  | undefined;
+let confirmedScreen: (ScreenSample & PreparationTarget) | undefined;
+let lessonSpeechEnabled = true;
+let preparedSpeech:
+  { turn: number; index: number; speech: PreparedSpeech } | undefined;
+type PreparationTarget = { turn: number; step: number; revision: number };
+function screenAllowed() {
+  return (
+    process.platform !== "darwin" ||
+    systemPreferences.getMediaAccessStatus("screen") === "granted"
+  );
+}
+// Ignore teachMe's own visible windows when comparing captures.
+function teachMeRegions(display: Electron.Display): ScreenRegion[] {
+  const { x, y, width, height } = display.bounds;
+  const regions = BrowserWindow.getAllWindows()
+    .filter((window) => window !== overlay && window.isVisible())
+    .map((window) => window.getBounds());
+  const board = boardRegion,
+    origin = overlay.getBounds();
+  if (board && overlay.isVisible())
+    regions.push({ ...board, x: origin.x + board.x, y: origin.y + board.y });
+  return regions.map((region) => ({
+    x: (region.x - x) / width,
+    y: (region.y - y) / height,
+    width: region.width / width,
+    height: region.height / height,
+  }));
+}
+function waitingAction() {
+  return actionGate && !actionGate.confirmed
+    ? { turn: actionGate.turn, step: actionGate.step }
+    : undefined;
+}
+// Synthesize the following step of the same page while the current narration plays.
+function prefetchSpeech() {
+  const lesson = activeLesson;
+  const index = (speech?.index ?? lessonStep) + 1;
+  const step = lesson?.steps[index];
+  if (
+    !step ||
+    !lessonSpeechEnabled ||
+    preparedSpeech ||
+    spoken.has(index) ||
+    // After an action the next step waits for verification and a prepared page.
+    lesson.steps[index - 1]?.action
+  )
+    return;
+  preparedSpeech = {
+    turn,
+    index,
+    speech: new PreparedSpeech(
+      step.say,
+      (text, signal) => speechChunks(text, signal, speechModel()),
+      providerAbort.signal,
+      2_400_000,
+    ),
+  };
+}
+function cancelPreparation() {
+  preparation.cancel();
+  preparedSpeech?.speech.cancel();
+  preparedSpeech = undefined;
+  confirmedScreen = undefined;
+}
+const preparation = new StepPreparation({
+  eligible: (tag) =>
+    tag.turn === turn &&
+    nextPage?.turn === tag.turn &&
+    nextPage.step === tag.step &&
+    actionGate?.turn === tag.turn &&
+    actionGate.step === tag.step &&
+    !actionGate.confirmed &&
+    !actionGate.action.sensitive &&
+    !(actionGate.watchUntil && Date.now() >= actionGate.watchUntil) &&
+    lessonAllowsScreen &&
+    !controls.isVisible() &&
+    !!lessonDisplay &&
+    hasInputGuard() &&
+    screenAllowed(),
+  async sample() {
+    const display = lessonDisplay;
+    if (!display) return;
+    const source = await captureDisplay(display, 800);
+    if (!source || source.thumbnail.isEmpty()) return;
+    return {
+      pixels: screenPixels(source.thumbnail),
+      ignore: teachMeRegions(display),
+    };
+  },
+  // Hide marks and the board as the normal page capture does, without interrupting narration.
+  async capture() {
+    const display = lessonDisplay;
+    if (!display || scrollBusy || actionGate?.checking) return;
+    const id = turn;
+    overlay.hide();
+    const ignore = teachMeRegions(display);
+    try {
+      const source = await captureDisplay(display, 1600);
+      if (id !== turn || !source || source.thumbnail.isEmpty()) return;
+      return {
+        pixels: screenPixels(source.thumbnail),
+        image: encodeScreen(source.thumbnail, 1024 * 1024),
+        ignore,
+      };
+    } finally {
+      if (id === turn && !scrollBusy && !actionGate?.checking) {
+        overlay.showInactive();
+        publishLesson();
+      }
+      // The screen has settled, so also check the action without waiting for narration to end.
+      if (id === turn) setTimeout(() => id === turn && requestEarlyCheck(), 0);
+    }
+  },
+  plan: (image, signal, segment) => {
+    if (!nextPage) return Promise.reject(new Error("No next page"));
+    return nextPage.plan(image, signal, segment);
+  },
+  canSpeak: () => lessonSpeechEnabled,
+  speak: (text, signal) =>
+    speechChunks(
+      text,
+      AbortSignal.any([signal, providerAbort.signal]),
+      speechModel(),
+    ),
+});
 
 let coordinatesInvalid = false;
 let referencePixels: ScreenPixels | undefined;
@@ -141,7 +287,7 @@ function scheduleScrollTracking() {
     !referencePixels ||
     coordinatesInvalid ||
     actionGate?.action.sensitive ||
-    scrollCaptures >= 30 ||
+    scrollCaptures >= 60 ||
     Date.now() > screenDeadline
   )
     return;
@@ -216,6 +362,9 @@ function cancelTeacher(notify = true, forgetHistory = false) {
     recentConversation.length = 0;
   }
   invalidateAction();
+  cancelPreparation();
+  lessonSpeechEnabled = true;
+  nextPage = undefined;
   actionGate = undefined;
   coordinatesInvalid = false;
   scrollCaptures = 0;
@@ -474,52 +623,114 @@ app.whenReady().then(() => {
       );
     let result: { lesson: Lesson };
     let completedLesson: Lesson | undefined;
-    while (true) {
-      const completedSteps = completedLesson?.steps || [];
-      const previousContext = completedLesson
-        ? JSON.stringify({
-            originalContext: previous,
-            completedLesson,
-            confirmation: actionGate?.confirmed,
-          })
-        : previous;
-      result = await planLesson(
+    let prepared: PreparedPage | undefined;
+    const planPage = (
+      completed: Lesson | undefined,
+      pageImage: string | undefined,
+      pageSignal: AbortSignal,
+      segment: (lesson: Lesson) => void,
+    ) =>
+      planLesson(
         { ...request, mode: route.rendering, context: route.context },
-        image,
-        previousContext,
+        pageImage,
+        completed
+          ? JSON.stringify({
+              originalContext: previous,
+              completedLesson: completed,
+              confirmation: "model",
+            })
+          : previous,
         course?.vectorStoreId,
-        signal,
-        (lesson) => {
-          if (id !== turn || signal.aborted) return;
-          if (completedLesson && lesson.kind !== completedLesson.kind)
-            throw new Error(
-              "The next page used an incompatible lesson format. Ask again to continue.",
-            );
-          if (completedSteps.length + lesson.steps.length > 12)
-            throw new Error(
-              "This lesson reached its step limit. Ask again to continue.",
-            );
-          activeLesson = {
-            ...lesson,
-            steps: [...completedSteps, ...lesson.steps],
-          };
-          previousLesson = JSON.stringify({
-            question: request.question,
-            lesson: activeLesson,
-          }).slice(0, 16000);
-          publishLesson();
-          controls.webContents.send("teacher-segment", {
-            requestId: request.requestId,
-            turn: id,
-            lesson: activeLesson,
-          });
-        },
+        pageSignal,
+        segment,
         research,
         {
-          kind: completedLesson?.kind,
-          remainingSteps: 12 - completedSteps.length,
+          kind: completed?.kind,
+          remainingSteps: 12 - (completed?.steps.length ?? 0),
         },
       );
+    // Capture the page after a verified action when no prepared page matched it.
+    const readNewPage = async (sensitive: boolean) => {
+      clearTracking();
+      lessonAnnotations = [];
+      coordinatesInvalid = true;
+      image = undefined;
+      if (!needsScreen || sensitive) return;
+      const revision = scrollRevision;
+      overlay.hide();
+      try {
+        const source = await captureDisplay(display, 1600);
+        signal.throwIfAborted();
+        if (id !== turn) throw new Error("Cancelled");
+        if (!source || source.thumbnail.isEmpty())
+          throw new Error(
+            "Could not read the new page. Ask again when it is visible.",
+          );
+        if (revision !== scrollRevision)
+          throw new Error(
+            "The screen changed during capture. Ask again when it is ready.",
+          );
+        referencePixels = screenPixels(source.thumbnail);
+        image = encodeScreen(source.thumbnail, 1024 * 1024);
+        coordinatesInvalid = false;
+        screenDeadline = Date.now() + 120_000;
+        clearTimeout(expiry);
+        if (screenTurn) expiry = setTimeout(invalidateAction, 120_000);
+      } finally {
+        if (id === turn) overlay.showInactive();
+      }
+    };
+    while (true) {
+      const completedSteps = completedLesson?.steps || [];
+      let received = 0;
+      const segment = (lesson: Lesson) => {
+        received++;
+        if (id !== turn || signal.aborted) return;
+        if (completedLesson && lesson.kind !== completedLesson.kind)
+          throw new Error(
+            "The next page used an incompatible lesson format. Ask again to continue.",
+          );
+        if (completedSteps.length + lesson.steps.length > 12)
+          throw new Error(
+            "This lesson reached its step limit. Ask again to continue.",
+          );
+        activeLesson = {
+          ...lesson,
+          steps: [...completedSteps, ...lesson.steps],
+        };
+        previousLesson = JSON.stringify({
+          question: request.question,
+          lesson: activeLesson,
+        }).slice(0, 16000);
+        publishLesson();
+        controls.webContents.send("teacher-segment", {
+          requestId: request.requestId,
+          turn: id,
+          lesson: activeLesson,
+        });
+        prefetchSpeech();
+      };
+      let planned: { lesson: Lesson } | undefined;
+      if (prepared) {
+        const page = prepared;
+        prepared = undefined;
+        // Fall back to a fresh capture only if nothing from the prepared page reached playback.
+        planned = await adoptPrepared(page, segment).catch((error) => {
+          if (received || signal.aborted || id !== turn) throw error;
+          return undefined;
+        });
+        if (!planned) {
+          preparedSpeech?.speech.cancel();
+          preparedSpeech = undefined;
+          await readNewPage(false);
+          controls.webContents.send(
+            "teacher-progress",
+            "Planning the next step",
+          );
+        }
+      }
+      result =
+        planned ?? (await planPage(completedLesson, image, signal, segment));
       signal.throwIfAborted();
       if (id !== turn) throw new Error("Cancelled");
       result = {
@@ -530,41 +741,59 @@ app.whenReady().then(() => {
       };
       const checkpoint = result.lesson.steps.at(-1)?.action;
       if (!checkpoint || result.lesson.steps.length >= 12) break;
-      await waitForAction(id, result.lesson.steps.length - 1, signal);
+      const completed = result.lesson;
+      const step = completed.steps.length - 1;
+      nextPage = {
+        turn: id,
+        step,
+        plan: (pageImage, pageSignal, pageSegment) =>
+          planPage(
+            completed,
+            pageImage,
+            AbortSignal.any([signal, pageSignal]),
+            pageSegment,
+          ),
+      };
+      try {
+        await waitForAction(id, step, signal);
+      } finally {
+        if (nextPage?.turn === id && nextPage.step === step)
+          nextPage = undefined;
+      }
       signal.throwIfAborted();
       if (id !== turn) throw new Error("Cancelled");
-      completedLesson = result.lesson;
+      completedLesson = completed;
       controls.webContents.send("teacher-progress", "Reading the new page");
-      clearTracking();
-      lessonAnnotations = [];
       annotationStart = completedLesson.steps.length;
-      coordinatesInvalid = true;
-      image = undefined;
-      if (needsScreen && !checkpoint.sensitive) {
-        const revision = scrollRevision;
-        overlay.hide();
-        try {
-          const source = await captureDisplay(display, 1600);
-          signal.throwIfAborted();
-          if (id !== turn) throw new Error("Cancelled");
-          if (!source || source.thumbnail.isEmpty())
-            throw new Error(
-              "Could not read the new page. Ask again when it is visible.",
-            );
-          if (revision !== scrollRevision)
-            throw new Error(
-              "The screen changed during capture. Ask again when it is ready.",
-            );
-          referencePixels = screenPixels(source.thumbnail);
-          image = encodeScreen(source.thumbnail, 1024 * 1024);
-          coordinatesInvalid = false;
-          screenDeadline = Date.now() + 120_000;
-          clearTimeout(expiry);
-          if (screenTurn) expiry = setTimeout(invalidateAction, 120_000);
-        } finally {
-          if (id === turn) overlay.showInactive();
-        }
-      }
+      const confirmed =
+        confirmedScreen?.turn === id && confirmedScreen.step === step
+          ? confirmedScreen
+          : undefined;
+      confirmedScreen = undefined;
+      prepared =
+        needsScreen && !checkpoint.sensitive
+          ? preparation.take({ turn: id, step }, confirmed)
+          : undefined;
+      preparation.cancel();
+      if (prepared) {
+        // The prepared capture matched the verifying screenshot, so reuse it as the page reference.
+        clearTracking();
+        lessonAnnotations = [];
+        referencePixels = prepared.capture.pixels;
+        image = prepared.capture.image;
+        coordinatesInvalid = false;
+        screenDeadline = Date.now() + 120_000;
+        clearTimeout(expiry);
+        if (screenTurn) expiry = setTimeout(invalidateAction, 120_000);
+        preparedSpeech?.speech.cancel();
+        preparedSpeech = undefined;
+        if (prepared.speech)
+          preparedSpeech = {
+            turn: id,
+            index: completedLesson.steps.length,
+            speech: prepared.speech,
+          };
+      } else await readNewPage(checkpoint.sensitive);
       controls.webContents.send("teacher-progress", "Planning the next step");
     }
     previousLesson = JSON.stringify(result.lesson).slice(0, 16000);
@@ -636,17 +865,20 @@ app.whenReady().then(() => {
       )
         return;
       scheduleScrollTracking();
+      preparation.screenChanged(waitingAction());
       resumeAutomaticCheck();
       return;
     }
     if (actionGate) {
-      // Input makes old coordinates unsafe, but does not stop the voice.
-      invalidateAction();
+      // Input may move the page, so re-find each mark on a fresh capture instead of dropping them.
+      clearTimeout(autoCheckTimer);
+      scheduleScrollTracking();
       if (
         point &&
         lessonDisplay &&
         screen.getDisplayNearestPoint(point).id !== lessonDisplay.id
       ) {
+        preparation.screenChanged();
         actionGate.armed = false;
         controls.webContents.send("teacher-check-state", {
           turn,
@@ -656,6 +888,7 @@ app.whenReady().then(() => {
           message: "Return to the lesson display to resume checking.",
         });
       } else if (point) {
+        preparation.screenChanged(waitingAction());
         const controlBounds = controls.getBounds();
         const inControls =
           controls.isVisible() &&
@@ -664,15 +897,22 @@ app.whenReady().then(() => {
           point.y >= controlBounds.y &&
           point.y <= controlBounds.y + controlBounds.height;
         if (!inControls) resumeAutomaticCheck();
-      } else if (
-        (kind === "typing" || kind === "switch") &&
-        !controls.isFocused()
-      ) {
-        resumeAutomaticCheck();
+      } else {
+        preparation.screenChanged(waitingAction());
+        if ((kind === "typing" || kind === "switch") && !controls.isFocused())
+          resumeAutomaticCheck();
       }
       return;
     }
-    invalidateAction();
+    if (
+      point &&
+      lessonDisplay &&
+      screen.getDisplayNearestPoint(point).id !== lessonDisplay.id
+    )
+      return;
+    preparation.screenChanged();
+    // Keep marks whose targets are still visible after the click or keypress.
+    scheduleScrollTracking();
   });
   let interactive = false;
   const hitTest = setInterval(() => {
@@ -726,15 +966,26 @@ app.whenReady().then(() => {
         throw new Error("Repeated speech request");
       spoken.add(index);
       speechAbort = new AbortController();
+      const stop = AbortSignal.any([providerAbort.signal, speechAbort.signal]);
+      // Use prepared audio only for the exact confirmed step and text it was made for.
+      const ready = preparedSpeech;
+      preparedSpeech = undefined;
+      const reuse =
+        !!ready &&
+        ready.turn === id &&
+        ready.index === index &&
+        ready.speech.text === activeLesson.steps[index].say &&
+        !ready.speech.failure;
+      if (!reuse) ready?.speech.cancel();
       speech = {
         index,
         pulling: false,
-        chunks: speechChunks(
-          activeLesson.steps[index].say,
-          AbortSignal.any([providerAbort.signal, speechAbort.signal]),
-          speechModel(),
-        ),
+        chunks:
+          reuse && ready
+            ? ready.speech.play(stop)
+            : speechChunks(activeLesson.steps[index].say, stop, speechModel()),
       };
+      prefetchSpeech();
     }
     const current = speech;
     if (current.index !== index || current.pulling)
@@ -758,6 +1009,10 @@ app.whenReady().then(() => {
   ipcMain.handle("teacher-speech-stop", (event, id) => {
     authorize(event);
     if (id !== turn) return;
+    lessonSpeechEnabled = false;
+    preparedSpeech?.speech.cancel();
+    preparedSpeech = undefined;
+    preparation.pending?.speech?.cancel();
     speechAbort.abort();
     void speech?.chunks.return(undefined).catch(() => {});
     speech = undefined;
@@ -785,6 +1040,11 @@ app.whenReady().then(() => {
     }
     overlay.showInactive();
     lessonStep = index;
+    // Reading mode reveals without speech, so drop audio prepared for this step.
+    if (preparedSpeech && preparedSpeech.index <= index) {
+      preparedSpeech.speech.cancel();
+      preparedSpeech = undefined;
+    }
     const checkpoint = activeLesson.steps[index].action;
     actionGate = checkpoint
       ? new ActionGate(turn, index, checkpoint)
@@ -841,9 +1101,11 @@ app.whenReady().then(() => {
     const signal = AbortSignal.any([checkAbort.signal, providerAbort.signal]);
     coordinatesInvalid = true;
     lessonAnnotations = [];
+    const screenRevision = preparation.revision;
     overlay.hide();
     const controlsWereVisible = controls.isVisible();
     controls.hide();
+    const ignore = teachMeRegions(lessonDisplay);
     try {
       const display = lessonDisplay;
       const source = await captureDisplay(display, 1600);
@@ -858,6 +1120,15 @@ app.whenReady().then(() => {
           message: "Screen changed. Check again when ready.",
         };
       const complete = gate.finish(revision, result);
+      // Keep the verified screen so a prepared page can be matched against it.
+      if (complete)
+        confirmedScreen = {
+          turn: id,
+          step: index,
+          revision: screenRevision,
+          pixels: screenPixels(source.thumbnail),
+          ignore,
+        };
       if (complete) resumeLesson?.();
       if (result === "wrong-app" || result === "ambiguous") gate.armed = false;
       return {
@@ -929,6 +1200,31 @@ app.whenReady().then(() => {
       Math.max(900, 3100 - (Date.now() - gate.lastCheck)),
     );
   };
+  // Verify a settled screen while narration still plays; the next step still waits for playback.
+  requestEarlyCheck = () => {
+    const gate = actionGate;
+    if (
+      !gate ||
+      gate.armed ||
+      gate.watchUntil ||
+      gate.confirmed ||
+      gate.checking ||
+      controls.isVisible() ||
+      automaticChecks >= 20
+    )
+      return;
+    automaticChecks++;
+    const id = turn;
+    void checkAction(id, gate.step, true).then((result) => {
+      if (gate !== actionGate || id !== turn) return;
+      controls.webContents.send("teacher-check-state", {
+        turn: id,
+        index: gate.step,
+        checking: false,
+        ...result,
+      });
+    });
+  };
   ipcMain.handle("teacher-watch", (event, id, index) => {
     authorize(event);
     if (
@@ -938,6 +1234,17 @@ app.whenReady().then(() => {
       actionGate.step !== index
     )
       return;
+    // An early check during narration may already have verified this action.
+    if (actionGate.confirmed) {
+      controls.webContents.send("teacher-check-state", {
+        turn: id,
+        index,
+        complete: true,
+        checking: false,
+        message: "Screen verified.",
+      });
+      return;
+    }
     if (actionGate.armed) return;
     actionGate.arm();
     const gate = actionGate;
