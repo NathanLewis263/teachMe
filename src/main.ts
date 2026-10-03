@@ -8,6 +8,7 @@ import {
   desktopCapturer,
   systemPreferences,
   globalShortcut,
+  dialog,
 } from "electron";
 import path from "node:path";
 import { encodeScreen } from "./capture";
@@ -23,6 +24,8 @@ import { applyDrawingStep, type Lesson } from "./lesson";
 import { speechModel, planLesson } from "./providers";
 import { speechChunks } from "./speech-stream";
 import type { LessonRequest } from "./teacher-types";
+import { indexCourse, loadCourse, removeCourse } from "./course";
+import { routeContext } from "./context-router";
 let providerAbort = new AbortController();
 let screenTurn = false;
 let viewedStep: number | undefined;
@@ -204,8 +207,13 @@ app.whenReady().then(() => {
     const previous = activeLesson
       ? JSON.stringify(activeLesson).slice(0, 16000)
       : "";
+    const course = await loadCourse();
     cancelTeacher(false);
     const id = turn;
+    const route = routeContext(request.question, !!course);
+    // Screen mode draws on the capture, so it always needs one.
+    const includeScreen =
+      request.mode === "screen" || (request.includeScreen && route.screen);
     const signal = providerAbort.signal;
     // Electron bounds are logical pixels; the drawing layer uses screenshot fractions.
     lessonDisplay = display;
@@ -213,11 +221,11 @@ app.whenReady().then(() => {
     overlay.showInactive();
     controls.webContents.send(
       "teacher-progress",
-      request.includeScreen ? "Capturing" : "Thinking",
+      includeScreen ? "Capturing" : "Thinking",
     );
     const capturedAt = Date.now();
     let image: string | undefined;
-    if (request.includeScreen) {
+    if (includeScreen) {
       if (
         process.platform === "darwin" &&
         systemPreferences.getMediaAccessStatus("screen") === "denied"
@@ -263,6 +271,7 @@ app.whenReady().then(() => {
       request,
       image,
       previous,
+      route.course ? course?.vectorStoreId : undefined,
       signal,
       (lesson) => {
         if (id !== turn || signal.aborted) return;
@@ -277,6 +286,21 @@ app.whenReady().then(() => {
     );
     if (id !== turn) throw new Error("Cancelled");
     return { turn: id, ...result };
+  });
+  ipcMain.handle("course", async (event, action: unknown) => {
+    authorize(event);
+    if (action === "choose") {
+      const { canceled, filePaths } = await dialog.showOpenDialog(controls, {
+        title: "Choose a course folder",
+        properties: ["openDirectory"],
+      });
+      if (!canceled && filePaths[0]) await indexCourse(filePaths[0]);
+    } else if (action === "remove") await removeCourse();
+    else if (action !== "status") throw new Error("Invalid course action");
+    const course = await loadCourse();
+    return course
+      ? { folder: path.basename(course.folder), files: course.files }
+      : null;
   });
   ipcMain.on("board-region", (event, region) => {
     if (

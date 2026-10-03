@@ -32,3 +32,17 @@ test("annotations reject missing and non-finite provider data", () => {
   ])
     assert.equal(validAnnotation(value), false);
 });
+
+test("router skips the screenshot only for standalone questions", () => {
+  const { routeContext } = require("../dist/context-router.js");
+  assert.deepEqual(routeContext("How does photosynthesis work?", true), {
+    screen: false,
+    course: true,
+  });
+  for (const question of [
+    "What does this mean?",
+    "Explain question 3",
+    "Why is my code throwing an error?",
+  ])
+    assert.equal(routeContext(question, false).screen, true);
+});

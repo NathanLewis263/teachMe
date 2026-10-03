@@ -1,7 +1,12 @@
 import { PcmPlayer } from "./pcm-player";
 import { HoldRecorder } from "./hold-recorder";
 import { useEffect, useRef, useState } from "react";
-import type { AppBridge, DisplayChoice, PlannedLesson } from "./teacher-types";
+import type {
+  AppBridge,
+  CourseStatus,
+  DisplayChoice,
+  PlannedLesson,
+} from "./teacher-types";
 const api = () => window.teachMe as AppBridge;
 export function TeacherControls() {
   const [config, setConfig] =
@@ -11,6 +16,8 @@ export function TeacherControls() {
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState<"whiteboard" | "screen">("whiteboard");
   const [busy, setBusy] = useState(false);
+  const [course, setCourse] = useState<CourseStatus>(null);
+  const [indexing, setIndexing] = useState(false);
   const [status, setStatus] = useState("Ready"),
     [error, setError] = useState("");
   const [result, setResult] = useState<PlannedLesson>(),
@@ -51,6 +58,10 @@ export function TeacherControls() {
         setDisplay(0);
       })
       .catch(() => setError("Could not read configuration."));
+    void api()
+      .course("status")
+      .then(setCourse)
+      .catch(() => {});
     const cancel = api().subscribe("teacher-cancel", () => {
       recorder.current?.cancel();
       stopLocal();
@@ -218,6 +229,25 @@ export function TeacherControls() {
     }
   }
 
+  async function changeCourse(action: "choose" | "remove") {
+    setIndexing(true);
+    setError("");
+    try {
+      setCourse(await api().course(action));
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message.replace(
+              /^Error invoking remote method '[^']+': Error: /,
+              "",
+            )
+          : "Course files could not be updated.",
+      );
+    } finally {
+      setIndexing(false);
+    }
+  }
+
   askRef.current = (value) => void ask(value);
   return (
     <main className="teacher-shell">
@@ -291,6 +321,36 @@ export function TeacherControls() {
                 <option value="screen">Screen</option>
               </select>
             </label>
+            <div>
+              Course files
+              <p className="teacher-note">
+                {indexing
+                  ? "Indexing…"
+                  : course
+                    ? `${course.folder} · ${course.files} files`
+                    : "None. Answers use only the screen and the model."}
+              </p>
+              <div className="question-actions">
+                <button
+                  type="button"
+                  className="quiet-button"
+                  disabled={indexing || !config?.openai}
+                  onClick={() => void changeCourse("choose")}
+                >
+                  {course ? "Change folder" : "Choose folder"}
+                </button>
+                {course && (
+                  <button
+                    type="button"
+                    className="quiet-button"
+                    disabled={indexing}
+                    onClick={() => void changeCourse("remove")}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
           </fieldset>
         </details>
         <button

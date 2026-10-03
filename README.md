@@ -29,7 +29,9 @@ On this Mac, add `/usr/local/bin` to your PATH if Node or npm isn't found.
 
 - Hold Control + Shift anywhere to record. Release either key to ask. Very short taps are ignored, and recording stops after 60 seconds.
 - Drag the seal to move it. Right-click it, or use its menu bar icon, to turn wandering off or open Teaching controls.
-- In Teaching controls, type a question, choose a display and pick Whiteboard or Screen. Each question includes a screenshot, including questions in whiteboard mode.
+- In Teaching controls, type a question, choose a display and pick Whiteboard or Screen. Screen mode always includes a screenshot.
+- Under Settings → Course files, choose a folder of course materials (PDF, slides, docs, notes, code). teachMe uploads them to an OpenAI vector store, and the model searches them when they'd help with an answer. Choosing another folder replaces the old index. Remove deletes the uploaded files from OpenAI. Re-choose the folder after its files change.
+- In Whiteboard mode, a question that doesn't seem to refer to the screen (no "this", "here", "question 3" and so on) is sent without a screenshot. The check lives in `src/context-router.ts` and is a stand-in for a proper decision model.
 - Drag the whiteboard by its title bar. Previous and Next only change the visible slide. Speech and lesson generation keep going.
 - Stop & clear cancels recording, requests and playback. Command/Ctrl + Shift + Escape does the same.
 
@@ -43,11 +45,11 @@ Screen Recording permission is needed to capture the selected display. Restart a
 
 ## A few limits
 
-Each question sends a screenshot and the question text to OpenAI. Voice recordings go to ElevenLabs, as does narration text. Check what's on the selected screen before asking. API keys stay in Electron's main process, outside React, and `.env` is ignored by Git.
+Each question sends the question text, plus a screenshot when needed, to OpenAI. Chosen course files are uploaded to your OpenAI account. Voice recordings go to ElevenLabs, as does narration text. Check what's on the selected screen before asking. API keys stay in Electron's main process, outside React, and `.env` is ignored by Git.
 
 Lessons stream as validated JSON. The model can't run code or control your apps. Requests have timeouts and no automatic retries. Screen annotations expire after two minutes because the screenshot may no longer match what's on screen.
 
-Diagrams are generated schematics. Complex anatomy can still look wrong, so use a clear labeled reference on screen when detail matters. Small screen text can be hard to read after compression. There are no file uploads or course retrieval. Ask another question to continue a topic.
+Diagrams are generated schematics. Complex anatomy can still look wrong, so use a clear labeled reference on screen when detail matters. Small screen text can be hard to read after compression. Course search returns up to five passages per question, and course files are capped at 500 per folder and 50 MB each. Ask another question to continue a topic.
 
 ## Checks
 
