@@ -87,6 +87,12 @@ export class LessonStream {
           throw new Error("Screen annotations must be static.");
         this.lesson = lesson;
         lessons.push(lesson);
+        // Later pages need a new screenshot after this action finishes.
+        if (record.step.action) {
+          this.ended = true;
+          this.buffer = "";
+          return lessons;
+        }
       }
     }
     if (this.buffer.length > 40_000)

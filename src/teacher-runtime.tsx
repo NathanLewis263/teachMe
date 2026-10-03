@@ -29,7 +29,7 @@ export function TeacherRuntime() {
     action: ActionCheckpoint;
   }>();
   const [checking, setChecking] = useState(false);
-  const confirmationRequest = useRef(0);
+  const screenCheckRequest = useRef(0);
   const watchedAction = useRef<{ turn: number; index: number } | undefined>(
     undefined,
   );
@@ -64,12 +64,7 @@ export function TeacherRuntime() {
     );
     const bubbleActions = api().subscribe("teacher-bubble-action", (value) => {
       if (value.operation !== operation.current) return;
-      bubbleAction.current(
-        value.action,
-        value.safeScreen === true,
-        value.url,
-        value.step,
-      );
+      bubbleAction.current(value.action, value.url, value.step);
     });
     const cancel = api().subscribe("teacher-cancel", () => {
       recorder.current?.cancel();
@@ -224,7 +219,7 @@ export function TeacherRuntime() {
           if (action && id === operation.current) {
             setStatus(
               action.sensitive
-                ? "Private step. Automatic checking is off."
+                ? "Private step. Screen checks are off. Ask again when ready."
                 : "Watching for the result of this step",
             );
             setCheckpoint({ turn: plan.turn, index, action });
@@ -236,7 +231,7 @@ export function TeacherRuntime() {
                 .catch(() => {
                   if (id === operation.current)
                     setStatus(
-                      "Automatic checking unavailable. Use the options below.",
+                      "Automatic checking unavailable. Try Check screen or ask again.",
                     );
                 });
             });
@@ -295,55 +290,40 @@ export function TeacherRuntime() {
     }
   }
 
-  async function confirmAction(method: "check" | "manual", safeScreen = false) {
-    if (!checkpoint || (checking && method === "check")) return;
+  async function checkScreen() {
+    if (!checkpoint || checking) return;
     const id = operation.current;
-    const request = ++confirmationRequest.current;
+    const request = ++screenCheckRequest.current;
     setChecking(true);
-    setStatus(method === "check" ? "Checking screen" : "Confirming");
+    setStatus("Checking screen");
     try {
-      const reply = await api().check(
-        checkpoint.turn,
-        checkpoint.index,
-        method,
-        safeScreen,
-      );
-      if (id !== operation.current || request !== confirmationRequest.current)
+      const reply = await api().check(checkpoint.turn, checkpoint.index);
+      if (id !== operation.current || request !== screenCheckRequest.current)
         return;
       setStatus(reply.message);
       if (reply.complete) {
         actionWait.current?.();
       }
     } catch {
-      if (id === operation.current && request === confirmationRequest.current)
-        setStatus("Check unavailable. Use I’ve done it.");
+      if (id === operation.current && request === screenCheckRequest.current)
+        setStatus("Check unavailable. Ask again when the next page is ready.");
     } finally {
-      if (id === operation.current && request === confirmationRequest.current) {
+      if (id === operation.current && request === screenCheckRequest.current) {
         setChecking(false);
       }
     }
   }
   const bubbleAction = useRef<
-    (
-      action: string,
-      safeScreen: boolean,
-      url?: string,
-      visibleStep?: number,
-    ) => void
+    (action: string, url?: string, visibleStep?: number) => void
   >(() => {});
-  bubbleAction.current = (action, safeScreen, url, visibleStep) => {
-    if (
-      ["continue", "manual", "check"].includes(action) &&
-      visibleStep !== step
-    )
-      return;
+  bubbleAction.current = (action, url, visibleStep) => {
+    if (["continue", "check"].includes(action) && visibleStep !== step) return;
     if (action === "source" && result && url)
       void api()
         .openSource(result.turn, url)
         .catch(() => setError("Could not open this source."));
     if (action === "continue") readingWait.current?.();
-    if (action === "manual" || action === "check")
-      void confirmAction(action, safeScreen);
+    if (action === "check") void checkScreen();
   };
   askRef.current = (value, voice) => void ask(value, voice);
   return filesOpen ? (

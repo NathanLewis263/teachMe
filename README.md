@@ -38,7 +38,7 @@ On this Mac, add `/usr/local/bin` to your PATH if Node or npm isn't found.
 - Drag the blackboard by its title bar. Previous and Next only change the visible slide. Speech and lesson generation keep going.
 - Use the minus button to minimize the whiteboard or speech bubble. Show board and Show restore them without clearing the lesson or stopping audio.
 - End lesson on the board, the bubble’s close button, and Stop & clear in the seal menu cancel recording, requests and playback and clear annotations. Command/Ctrl + Shift + Escape does the same. Plain Escape is not mapped.
-- A small bubble above the seal shows listening, thinking, planning and narration as lesson steps arrive. Continue and checkpoint fallback actions appear there only when needed. There is no Teaching controls pane.
+- A small bubble above the seal shows listening, thinking, planning and narration as lesson steps arrive. Continue appears for reading, and Check screen can retry an automatic check. There is no Teaching controls pane.
 
 A slide appears when its speech starts. If speech isn't configured or fails, use Continue in the seal bubble to read through the lesson. If generation stops early, the valid slides already received stay available.
 
@@ -56,7 +56,7 @@ Lessons stream as validated JSON. The model cannot run code or control your apps
 
 Diagrams are generated schematics. Complex anatomy can still look wrong, so use a clear labeled reference on screen when detail matters. Small screen text can be hard to read after compression. Course search returns up to five passages per search, and course files are capped at 500 per folder and 50 MB each. Ask another question to continue a topic.
 
-Action checkpoints pause after narration while you perform the action. For non-sensitive steps, input triggers bounded screenshot verification, up to five checks per checkpoint and 20 automatic checks per turn, with a two-minute watch window. Sensitive steps use manual confirmation. After an uncertain result, another interaction retries within the same limits. App switching no longer leaves checking permanently paused. I’ve done it is available directly in the seal bubble. The app never clicks for you.
+Guided lessons pause after each action and automatically check the result on screen. Once verified, the app captures the new page and plans the next explanation and pointers using the original question and completed steps. You do not need to press a completion button. Checks allow up to five attempts per checkpoint and 20 automatic checks per turn, within a two-minute watch window. Incomplete results retry within those limits; an uncertain result or app switch can resume on the next interaction. Check screen retries directly, without a confirmation checkbox. Sensitive steps and questions that prohibit screenshots do not send checking screenshots; ask a new question when ready. Lessons remain bounded to 12 segments. The app never clicks for you.
 
 Before a lesson, OpenAI checks whether the question needs public web research, using only the question and at most two search tool calls. Screenshots and lesson history are not sent to research. App-layout research is disabled by default; it runs only if explicitly requested. App guidance uses the lesson screenshot to identify the app and visible controls. Verified sources appear as clickable links. Research, lesson planning and checkpoint verification use medium reasoning.
 

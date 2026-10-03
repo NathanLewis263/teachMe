@@ -1,4 +1,4 @@
-// Pause one action step until the screen check or the student confirms it is done.
+// Pause an action step until a screen check confirms the result.
 export type ActionCheckpoint = {
   expectedAction: string;
   completionCondition: string;
@@ -51,7 +51,7 @@ export class ActionGate {
       now < this.watchUntil
     );
   }
-  confirmed: "model" | "manual" | undefined;
+  confirmed: "model" | undefined;
   checking = false;
   lastCheck = 0;
   attempts = 0;
@@ -84,9 +84,5 @@ export class ActionGate {
     this.checking = false;
     if (result === "complete") this.confirmed = "model";
     return !!this.confirmed;
-  }
-  manual() {
-    this.invalidate();
-    this.confirmed = "manual";
   }
 }

@@ -6,7 +6,6 @@ export function Pet() {
   const [state, setState] = useState("Ready");
   const [detail, setDetail] = useState("");
   const [bubble, setBubble] = useState<PetBubble | null>(null);
-  const [safeScreen, setSafeScreen] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [direction, setDirection] = useState(1);
   const transcript = useRef<HTMLParagraphElement>(null);
@@ -18,7 +17,6 @@ export function Pet() {
       action: name,
       operation: bubble?.operation,
       step: bubble?.step,
-      safeScreen,
       url,
     });
   useEffect(() => {
@@ -45,9 +43,6 @@ export function Pet() {
       window.removeEventListener("mousemove", move);
     };
   }, []);
-  useEffect(() => {
-    setSafeScreen(false);
-  }, [bubble?.operation, bubble?.checkpoint?.expectedAction, bubble?.checking]);
   useEffect(() => {
     if (transcript.current) transcript.current.scrollTop = 0;
   }, [bubble?.text]);
@@ -123,22 +118,17 @@ export function Pet() {
                   <summary>Need a hand?</summary>
                   <p>Expected: {bubble.checkpoint.completionCondition}</p>
                   {bubble.checkpoint.sensitive ? (
-                    <p>This is a private step. Screen checks are off.</p>
+                    <p>
+                      Screen checks are off for this private step. Ask a new
+                      question when you are ready.
+                    </p>
                   ) : (
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={safeScreen}
-                        onChange={(e) => setSafeScreen(e.target.checked)}
-                      />{" "}
-                      The intended app is visible with no passwords or private
-                      information. Check sends a screenshot.
-                    </label>
+                    <p>Checking sends a screenshot of the lesson display.</p>
                   )}
                   <div className="bubble-actions">
                     {!bubble.checkpoint.sensitive && (
                       <button
-                        disabled={!safeScreen || bubble.checking}
+                        disabled={bubble.checking}
                         onClick={() => action("check")}
                       >
                         {bubble.checking ? "Checking…" : "Check screen"}
@@ -146,12 +136,6 @@ export function Pet() {
                     )}
                   </div>
                 </details>
-                <button
-                  className="bubble-continue"
-                  onClick={() => action("manual")}
-                >
-                  I’ve done it
-                </button>
               </div>
             )}
             {!voicePending && bubble?.waiting && (

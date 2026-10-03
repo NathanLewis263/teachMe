@@ -168,7 +168,6 @@ export function createPet(
       const intent = value as {
         action?: string;
         operation?: number;
-        safeScreen?: boolean;
         url?: string;
       };
       if (intent.action === "end") {
@@ -177,7 +176,7 @@ export function createPet(
       }
       if (
         intent.operation !== bubble?.operation ||
-        !["continue", "manual", "check", "source"].includes(intent.action || "")
+        !["continue", "check", "source"].includes(intent.action || "")
       )
         return;
       controls.webContents.send("teacher-bubble-action", intent);

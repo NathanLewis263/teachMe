@@ -5,8 +5,8 @@ contextBridge.exposeInMainWorld("teachMe", {
     ipcRenderer.invoke("teacher-source", turn, url),
   watch: (turn: number, index: number) =>
     ipcRenderer.invoke("teacher-watch", turn, index),
-  check: (turn: number, index: number, method: string, safeScreen: boolean) =>
-    ipcRenderer.invoke("teacher-check", turn, index, method, safeScreen),
+  check: (turn: number, index: number) =>
+    ipcRenderer.invoke("teacher-check", turn, index),
   browse: (turn: number, index: number) =>
     ipcRenderer.invoke("board-browse", turn, index),
   boardRegion: (region: unknown) => ipcRenderer.send("board-region", region),

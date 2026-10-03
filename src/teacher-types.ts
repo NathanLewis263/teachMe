@@ -25,8 +25,6 @@ export interface AppBridge {
   check(
     turn: number,
     index: number,
-    method: "check" | "manual",
-    safeScreen: boolean,
   ): Promise<{ complete: boolean; message: string }>;
   browse(turn: number, index: number): Promise<void>;
   boardRegion(

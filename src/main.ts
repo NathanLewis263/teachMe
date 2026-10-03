@@ -45,11 +45,40 @@ import type { LessonRequest } from "./teacher-types";
 import { indexCourse, loadCourse, removeCourse } from "./course";
 let providerAbort = new AbortController();
 let screenTurn = false;
+let lessonAllowsScreen = false;
 let actionGate: ActionGate | undefined;
 let checkAbort = new AbortController();
 let autoCheckTimer: ReturnType<typeof setTimeout> | undefined;
 let automaticChecks = 0;
-let requestAutomaticCheck: (followup?: boolean) => void = () => {};
+let requestAutomaticCheck: () => void = () => {};
+let resumeLesson: (() => void) | undefined;
+let annotationStart = 0;
+// A checkpoint can finish before generation returns, or while this wait is active.
+function waitForAction(id: number, index: number, signal: AbortSignal) {
+  signal.throwIfAborted();
+  if (
+    actionGate?.turn === id &&
+    actionGate.step === index &&
+    actionGate.confirmed
+  )
+    return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const clear = () => {
+      signal.removeEventListener("abort", abort);
+      if (resumeLesson === finish) resumeLesson = undefined;
+    };
+    const finish = () => {
+      clear();
+      resolve();
+    };
+    const abort = () => {
+      clear();
+      reject(new Error("Cancelled"));
+    };
+    resumeLesson = finish;
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
 function resumeAutomaticCheck() {
   if (actionGate?.resume()) requestAutomaticCheck();
 }
@@ -91,7 +120,7 @@ function visibleAnnotations(): Annotation[] {
     viewedStep === undefined
       ? lessonAnnotations
       : activeLesson.steps
-          .slice(0, viewedStep + 1)
+          .slice(annotationStart, viewedStep + 1)
           .reduce(applyDrawingStep, [] as Annotation[]);
   const beforeScroll = referencePixels;
   const afterScroll = scrolledPixels;
@@ -190,6 +219,7 @@ function cancelTeacher(notify = true, forgetHistory = false) {
   actionGate = undefined;
   coordinatesInvalid = false;
   scrollCaptures = 0;
+  annotationStart = 0;
   automaticChecks = 0;
   clearDisplay();
   providerAbort.abort();
@@ -204,6 +234,7 @@ function cancelTeacher(notify = true, forgetHistory = false) {
   viewedStep = undefined;
   boardRegion = null;
   screenTurn = false;
+  lessonAllowsScreen = false;
   overlay.webContents.send("lesson-clear");
   if (notify) controls.webContents.send("teacher-cancel");
 }
@@ -394,6 +425,7 @@ app.whenReady().then(() => {
         "Enable voice permissions from the seal menu before using screen annotations, so input can clear stale marks.",
       );
     const needsScreen = route.context === "screenshot";
+    lessonAllowsScreen = needsScreen;
     let image: string | undefined;
     let capturedAt = Date.now();
     lessonDisplay = display;
@@ -440,29 +472,101 @@ app.whenReady().then(() => {
         invalidateAction,
         Math.max(0, screenDeadline - Date.now()),
       );
-    const result = await planLesson(
-      {
-        ...request,
-        mode: route.rendering,
-        context: route.context,
-      },
-      image,
-      previous,
-      course?.vectorStoreId,
-      signal,
-      (lesson) => {
-        if (id !== turn || signal.aborted) return;
-        activeLesson = lesson;
-        publishLesson();
-        controls.webContents.send("teacher-segment", {
-          requestId: request.requestId,
-          turn: id,
-          lesson,
-        });
-      },
-      research,
-    );
-    if (id !== turn) throw new Error("Cancelled");
+    let result: { lesson: Lesson };
+    let completedLesson: Lesson | undefined;
+    while (true) {
+      const completedSteps = completedLesson?.steps || [];
+      const previousContext = completedLesson
+        ? JSON.stringify({
+            originalContext: previous,
+            completedLesson,
+            confirmation: actionGate?.confirmed,
+          })
+        : previous;
+      result = await planLesson(
+        { ...request, mode: route.rendering, context: route.context },
+        image,
+        previousContext,
+        course?.vectorStoreId,
+        signal,
+        (lesson) => {
+          if (id !== turn || signal.aborted) return;
+          if (completedLesson && lesson.kind !== completedLesson.kind)
+            throw new Error(
+              "The next page used an incompatible lesson format. Ask again to continue.",
+            );
+          if (completedSteps.length + lesson.steps.length > 12)
+            throw new Error(
+              "This lesson reached its step limit. Ask again to continue.",
+            );
+          activeLesson = {
+            ...lesson,
+            steps: [...completedSteps, ...lesson.steps],
+          };
+          previousLesson = JSON.stringify({
+            question: request.question,
+            lesson: activeLesson,
+          }).slice(0, 16000);
+          publishLesson();
+          controls.webContents.send("teacher-segment", {
+            requestId: request.requestId,
+            turn: id,
+            lesson: activeLesson,
+          });
+        },
+        research,
+        {
+          kind: completedLesson?.kind,
+          remainingSteps: 12 - completedSteps.length,
+        },
+      );
+      signal.throwIfAborted();
+      if (id !== turn) throw new Error("Cancelled");
+      result = {
+        lesson: {
+          ...result.lesson,
+          steps: [...completedSteps, ...result.lesson.steps],
+        },
+      };
+      const checkpoint = result.lesson.steps.at(-1)?.action;
+      if (!checkpoint || result.lesson.steps.length >= 12) break;
+      await waitForAction(id, result.lesson.steps.length - 1, signal);
+      signal.throwIfAborted();
+      if (id !== turn) throw new Error("Cancelled");
+      completedLesson = result.lesson;
+      controls.webContents.send("teacher-progress", "Reading the new page");
+      clearTracking();
+      lessonAnnotations = [];
+      annotationStart = completedLesson.steps.length;
+      coordinatesInvalid = true;
+      image = undefined;
+      if (needsScreen && !checkpoint.sensitive) {
+        const revision = scrollRevision;
+        overlay.hide();
+        try {
+          const source = await captureDisplay(display, 1600);
+          signal.throwIfAborted();
+          if (id !== turn) throw new Error("Cancelled");
+          if (!source || source.thumbnail.isEmpty())
+            throw new Error(
+              "Could not read the new page. Ask again when it is visible.",
+            );
+          if (revision !== scrollRevision)
+            throw new Error(
+              "The screen changed during capture. Ask again when it is ready.",
+            );
+          referencePixels = screenPixels(source.thumbnail);
+          image = encodeScreen(source.thumbnail, 1024 * 1024);
+          coordinatesInvalid = false;
+          screenDeadline = Date.now() + 120_000;
+          clearTimeout(expiry);
+          if (screenTurn) expiry = setTimeout(invalidateAction, 120_000);
+        } finally {
+          if (id === turn) overlay.showInactive();
+        }
+      }
+      controls.webContents.send("teacher-progress", "Planning the next step");
+    }
     previousLesson = JSON.stringify(result.lesson).slice(0, 16000);
     recentConversation.push(
       `User: ${request.question.slice(0, 480)}`,
@@ -549,8 +653,7 @@ app.whenReady().then(() => {
           index: actionGate.step,
           complete: false,
           checking: false,
-          message:
-            "Return to the lesson display to resume checking, or choose I’ve done it.",
+          message: "Return to the lesson display to resume checking.",
         });
       } else if (point) {
         const controlBounds = controls.getBounds();
@@ -694,13 +797,7 @@ app.whenReady().then(() => {
     publishLesson();
     return { ok: true };
   });
-  async function checkAction(
-    id: number,
-    index: number,
-    method: string,
-    safeScreen: boolean,
-    automatic = false,
-  ) {
+  async function checkAction(id: number, index: number, automatic = false) {
     const gate = actionGate;
     if (
       !gate ||
@@ -713,19 +810,8 @@ app.whenReady().then(() => {
         complete: false,
         message: "This action is no longer waiting.",
       };
-    // Manual confirmation continues without a screenshot or a claim of verification.
-    if (method === "manual") {
-      checkAbort.abort();
-      gate.manual();
-      invalidateAction();
-      return {
-        complete: true,
-        message: "Confirmed by you. Screen was not verified.",
-      };
-    }
     if (
-      method !== "check" ||
-      safeScreen !== true ||
+      !lessonAllowsScreen ||
       gate.action.sensitive ||
       !lessonDisplay ||
       !hasInputGuard()
@@ -733,7 +819,7 @@ app.whenReady().then(() => {
       return {
         complete: false,
         message:
-          "Choose I’ve done it. Screen verification is unavailable or this step contains sensitive information.",
+          "Screen verification is unavailable or this step is private. Ask a new question when ready.",
       };
     if (
       process.platform === "darwin" &&
@@ -741,14 +827,14 @@ app.whenReady().then(() => {
     )
       return {
         complete: false,
-        message: "Screen permission is unavailable. Choose I’ve done it.",
+        message: "Screen permission is unavailable. Enable it, then ask again.",
       };
     const revision = gate.begin();
     if (revision === undefined)
       return {
         complete: false,
         message:
-          "Wait a few seconds before checking again. After five checks, choose I’ve done it or ask a new question.",
+          "Wait a few seconds before checking again. After five checks, ask a new question.",
       };
     checkAbort.abort();
     checkAbort = new AbortController();
@@ -772,17 +858,17 @@ app.whenReady().then(() => {
           message: "Screen changed. Check again when ready.",
         };
       const complete = gate.finish(revision, result);
+      if (complete) resumeLesson?.();
       if (result === "wrong-app" || result === "ambiguous") gate.armed = false;
       return {
         complete,
-        retry: result === "incomplete",
         message: complete
           ? "Screen verified."
           : result === "wrong-app"
             ? "Return to the intended app. Your next interaction will check again."
             : result === "incomplete"
               ? "Waiting for the expected result to appear."
-              : "I cannot confirm the result yet. Interact with the app to retry, or choose I’ve done it.",
+              : "I cannot confirm the result yet. Interact with the app to retry, or ask a new question.",
       };
     } catch {
       gate.finish(revision, "ambiguous");
@@ -790,7 +876,7 @@ app.whenReady().then(() => {
       return {
         complete: false,
         message:
-          "Verification unavailable or screen changed. Check again or choose I’ve done it.",
+          "Verification unavailable or screen changed. Check again or ask a new question.",
       };
     } finally {
       if (id === turn) {
@@ -800,12 +886,12 @@ app.whenReady().then(() => {
       }
     }
   }
-  ipcMain.handle("teacher-check", (event, id, index, method, safeScreen) => {
+  ipcMain.handle("teacher-check", (event, id, index) => {
     authorize(event);
-    return checkAction(id, index, method, safeScreen);
+    return checkAction(id, index);
   });
-  // Wait for the UI to settle, then allow one follow-up for a delayed result.
-  requestAutomaticCheck = (followup = false) => {
+  // Keep checking delayed page transitions within the same action and turn budgets.
+  requestAutomaticCheck = () => {
     clearTimeout(autoCheckTimer);
     const gate = actionGate;
     if (!gate || !gate.canWatch() || automaticChecks >= 20) return;
@@ -827,19 +913,18 @@ app.whenReady().then(() => {
           checking: true,
           message: "Checking the result on screen",
         });
-        const result = await checkAction(id, gate.step, "check", true, true);
+        const result = await checkAction(id, gate.step, true);
         if (gate !== actionGate || id !== turn) return;
         if (!result.complete && (!gate.canWatch() || automaticChecks >= 20))
           result.message +=
-            " Automatic checks are paused. Choose I’ve done it in the seal bubble.";
+            " Automatic checks are paused. Ask a new question when ready.";
         controls.webContents.send("teacher-check-state", {
           turn: id,
           index: gate.step,
           checking: false,
           ...result,
         });
-        if ("retry" in result && result.retry && !followup)
-          requestAutomaticCheck(true);
+        if (!result.complete && gate.canWatch()) requestAutomaticCheck();
       },
       Math.max(900, 3100 - (Date.now() - gate.lastCheck)),
     );
@@ -867,7 +952,7 @@ app.whenReady().then(() => {
         complete: false,
         checking: false,
         message:
-          "Automatic checking paused after two minutes. Choose I’ve done it in the seal bubble.",
+          "Automatic checking paused after two minutes. Ask a new question when ready.",
       });
     }, 120_000);
     requestAutomaticCheck();
