@@ -1,4 +1,4 @@
-// PCM is signed little-endian mono at 24 kHz. Synthesis and playback both use normal speed.
+// Schedule PCM on one audio clock; drain before the next step so narration does not overlap.
 export class PcmPlayer {
   private context = new AudioContext({ sampleRate: 24000 });
   private next = 0;
@@ -38,6 +38,7 @@ export class PcmPlayer {
     if (this.stopped) throw new Error("Cancelled");
     if (this.context.state !== "running")
       throw new Error("Audio playback is unavailable.");
+    // A chunk can split a two-byte sample; save the spare byte for the next chunk.
     if (this.odd !== undefined) {
       const joined = new Uint8Array(bytes.length + 1);
       joined[0] = this.odd;

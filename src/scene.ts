@@ -1,3 +1,4 @@
+// Build each board page from earlier edits, using stable IDs to update shapes and links.
 import { validAnnotation, type Annotation } from "./contracts";
 
 export const MAX_STEPS = 12;

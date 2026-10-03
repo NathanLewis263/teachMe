@@ -1,3 +1,4 @@
+// Main decides whether to capture; this file shrinks the image to fit the request budget.
 import type { NativeImage } from "electron";
 
 // Base64 makes the image bigger, so check the final string before sending it.

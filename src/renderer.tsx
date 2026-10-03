@@ -1,3 +1,4 @@
+// Main uses query flags to pick the seal, controls, or overlay from this shared bundle.
 import { createRoot } from "react-dom/client";
 import { Pet } from "./pet";
 import { TeacherControls } from "./teacher-controls";
