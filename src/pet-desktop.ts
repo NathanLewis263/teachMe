@@ -17,6 +17,7 @@ import path from "node:path";
 export function createPet(
   controls: BrowserWindow,
   stop: (newQuestion?: boolean) => void,
+  toggleMarks: () => void,
 ) {
   const size = { width: 340, height: 420 };
   const area = screen.getPrimaryDisplay().workArea;
@@ -50,6 +51,7 @@ export function createPet(
     query: { pet: "true" },
   });
   let bubble: PetBubble | undefined;
+  let marks = { available: false, visible: false };
   let state = "Ready",
     detail = "Hold Control–Shift to talk. Right-click the seal for its menu.";
   let roaming = false,
@@ -174,6 +176,10 @@ export function createPet(
         cancel();
         return;
       }
+      if (intent.action === "marks") {
+        toggleMarks();
+        return;
+      }
       if (
         intent.operation !== bubble?.operation ||
         !["continue", "check", "source", "pause", "resume", "confirm"].includes(
@@ -187,6 +193,7 @@ export function createPet(
     if (command === "ready") {
       showState(state, detail);
       pet.webContents.send("pet-bubble", bubble || null);
+      pet.webContents.send("pet-marks", marks);
     }
     if (command === "menu") menu().popup({ window: pet });
     if (command === "hover" && typeof value === "boolean") {
@@ -235,5 +242,16 @@ export function createPet(
     clearInterval(timer);
     tray.destroy();
   });
-  return { cancel };
+  return {
+    cancel,
+    marks(value: typeof marks) {
+      if (
+        value.available === marks.available &&
+        value.visible === marks.visible
+      )
+        return;
+      marks = value;
+      if (!pet.isDestroyed()) pet.webContents.send("pet-marks", marks);
+    },
+  };
 }

@@ -10,6 +10,7 @@ import {
   validLesson,
   type Lesson,
   type LessonFrame,
+  type LessonQuiz,
 } from "./lesson";
 
 const sourceHost = (url: string) => {
@@ -217,7 +218,88 @@ function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
     </svg>
   );
 }
-function Notes({ lesson, step }: { lesson: Lesson; step: number }) {
+// Strip only a punctuated verdict, so "No electrons move" keeps its meaning.
+const withoutVerdict = (why: string) =>
+  why.replace(
+    /^(?:correct|incorrect|not quite|wrong|right|yes|no)\b[.!,:]\s*/i,
+    "",
+  );
+// Wrong picks stay marked so the learner can retry; the right pick locks the question.
+function Quiz({
+  quiz,
+  picks,
+  onPick,
+  onContinue,
+}: {
+  quiz: LessonQuiz;
+  picks: number[];
+  onPick: (index: number) => void;
+  // Set only while narration waits on this question.
+  onContinue?: () => void;
+}) {
+  const solved = picks.some((index) => quiz.options[index]?.correct);
+  const latest = quiz.options[picks.at(-1) ?? -1];
+  const why = latest ? withoutVerdict(latest.why) : "";
+  const advance = useRef(onContinue);
+  advance.current = onContinue;
+  const waiting = solved && !!onContinue;
+  useEffect(() => {
+    if (!waiting) return;
+    // Leave time to read the explanation: about 4 words a second, 2.5 to 7 seconds.
+    const words = why.split(/\s+/).length;
+    const timer = setTimeout(
+      () => advance.current?.(),
+      Math.min(7000, Math.max(2500, words * 250)),
+    );
+    return () => clearTimeout(timer);
+  }, [waiting, why]);
+  return (
+    <div className="lesson-quiz">
+      <p className="quiz-question">{quiz.question}</p>
+      <div className="quiz-options" role="group" aria-label="Answers">
+        {quiz.options.map((option, index) => {
+          const picked = picks.includes(index);
+          return (
+            <button
+              key={index}
+              className={
+                picked ? (option.correct ? "correct" : "wrong") : undefined
+              }
+              disabled={solved || picked}
+              aria-pressed={picked}
+              onClick={() => onPick(index)}
+            >
+              <span className="quiz-letter" aria-hidden>
+                {String.fromCharCode(65 + index)}
+              </span>
+              {option.text}
+            </button>
+          );
+        })}
+      </div>
+      <p
+        className={`quiz-feedback${latest ? (latest.correct ? " correct" : " wrong") : ""}`}
+        role="status"
+      >
+        {latest && `${latest.correct ? "Correct." : "Not quite."} ${why}`}
+      </p>
+      {waiting && (
+        <button className="quiz-next" onClick={onContinue}>
+          Next question
+        </button>
+      )}
+    </div>
+  );
+}
+function Notes({
+  lesson,
+  step,
+  children,
+}: {
+  lesson: Lesson;
+  step: number;
+  children?: React.ReactNode;
+}) {
   const item = lesson.steps[step];
   return (
     <article className="lesson-notes lesson-part" key={step}>
@@ -246,6 +328,7 @@ function Notes({ lesson, step }: { lesson: Lesson; step: number }) {
           </tbody>
         </table>
       )}
+      {children}
     </article>
   );
 }
@@ -263,6 +346,8 @@ export function Overlay() {
   const [compact, setCompact] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // Quiz attempts by "turn:step", so browsing away and back keeps them.
+  const [picks, setPicks] = useState<Record<string, number[]>>({});
   const fullBoardSize = useRef({ width: 680, height: 400 });
   const arrange = useRef<() => void>(() => {});
   const reportRegion = () => {
@@ -291,6 +376,7 @@ export function Overlay() {
       setCompact(false);
       setMinimized(false);
       setExpanded(false);
+      setPicks({});
     });
     const frames = window.teachMe.subscribe("lesson", (value: LessonFrame) => {
       if (
@@ -381,6 +467,30 @@ export function Overlay() {
   const browse = (index: number) => {
     if (lesson) void window.teachMe.browse(lesson.turn, index);
   };
+  const quiz = lesson?.lesson.steps[lesson.step].quiz;
+  const quizKey = lesson ? `${lesson.turn}:${lesson.step}` : "";
+  const quizLive = !!lesson && lesson.step === (lesson.live ?? lesson.step);
+  const quizView = quiz && (
+    <Quiz
+      quiz={quiz}
+      picks={picks[quizKey] || []}
+      onContinue={
+        quizLive
+          ? () =>
+              // Show the next question now when it exists; otherwise release narration to wait for it.
+              lesson.step + 1 < lesson.lesson.steps.length
+                ? browse(lesson.step + 1)
+                : void window.teachMe.quizContinue(lesson.turn, lesson.step)
+          : undefined
+      }
+      onPick={(index) =>
+        setPicks((all) => ({
+          ...all,
+          [quizKey]: [...(all[quizKey] || []), index],
+        }))
+      }
+    />
+  );
   return (
     <>
       <AnnotationLayer
@@ -397,7 +507,7 @@ export function Overlay() {
         lesson.lesson.kind !== "voice" && (
           <section
             ref={board}
-            className={`lesson-board${lesson.lesson.kind === "drawing" ? " screen-caption" : ""}${compact ? " board-compact" : ""}`}
+            className={`lesson-board${lesson.lesson.kind === "drawing" ? " screen-caption" : ""}${lesson.lesson.kind === "scene" && quiz ? " board-wide" : ""}${compact ? " board-compact" : ""}`}
             aria-label={lesson.lesson.title}
             style={position ? { left: position.x, top: position.y } : undefined}
           >
@@ -480,7 +590,16 @@ export function Overlay() {
               )}
             </header>
             <div className="board-content">
-              {lesson.lesson.kind === "scene" ? (
+              {lesson.lesson.kind === "scene" && quizView ? (
+                // Keep the picture in view; scene questions ask about it.
+                <article className="lesson-notes quiz-scene" key={quizKey}>
+                  {lesson.lesson.steps[lesson.step].heading && (
+                    <h3>{lesson.lesson.steps[lesson.step].heading}</h3>
+                  )}
+                  <SceneView lesson={lesson.lesson} step={lesson.step} />
+                  {quizView}
+                </article>
+              ) : lesson.lesson.kind === "scene" ? (
                 <>
                   <SceneView lesson={lesson.lesson} step={lesson.step} />
                   <p className="scene-caption">
@@ -492,7 +611,9 @@ export function Overlay() {
                 </>
               ) : lesson.lesson.kind === "notes" ||
                 lesson.lesson.kind === "drawing" ? (
-                <Notes lesson={lesson.lesson} step={lesson.step} />
+                <Notes lesson={lesson.lesson} step={lesson.step}>
+                  {quizView}
+                </Notes>
               ) : (
                 <Flow lesson={lesson.lesson} step={lesson.step} />
               )}

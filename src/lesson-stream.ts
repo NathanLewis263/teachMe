@@ -1,5 +1,5 @@
 // Turn partial model text into valid steps; a network chunk is not a whole teaching step.
-import { type Lesson } from "./lesson";
+import { type Lesson, type LessonStep } from "./lesson";
 import { normalizeStep, segmentIssue } from "./segment-validation";
 import type { RoutedLessonRequest } from "./teacher-types";
 
@@ -8,6 +8,8 @@ export class LessonStream {
   private size = 0;
   private ended = false;
   private header: Omit<Lesson, "steps"> | undefined;
+  // Quizzes that arrive after an explanation wait here so they always come last.
+  private quizzes: LessonStep[] = [];
   lesson: Lesson | undefined;
   constructor(
     private mode: RoutedLessonRequest["mode"],
@@ -64,6 +66,8 @@ export class LessonStream {
           color: record.color,
         };
       } else if (record.type === "end") {
+        for (const step of this.quizzes.splice(0))
+          lessons.push(this.commit(step));
         if (!this.lesson)
           throw new Error("The lesson had no teaching segments.");
         this.ended = true;
@@ -71,22 +75,18 @@ export class LessonStream {
         if (record.type !== "step")
           throw new Error("Invalid teaching segment.");
         record.step = normalizeStep(record.step);
-        const lesson: Lesson = {
-          ...this.header,
-          steps: [...(this.lesson?.steps || []), record.step],
-        };
-        const issue = segmentIssue(lesson);
-        if (issue)
-          throw new Error(
-            `Teaching segment ${lesson.steps.length}: ${issue}.${this.lesson ? " Earlier valid parts remain available." : ""}`,
-          );
-        if (
-          (this.mode === "screen" || this.mode === "both") &&
-          record.step.annotations?.some((a: { motion?: unknown }) => a.motion)
-        )
-          throw new Error("Screen annotations must be static.");
-        this.lesson = lesson;
-        lessons.push(lesson);
+        const explained = this.lesson?.steps.some((step) => !step.quiz);
+        if (record.step?.quiz && !record.step.action && explained) {
+          // Check it now so a broken quiz still fails at its own position.
+          this.check([...this.lesson!.steps, ...this.quizzes, record.step]);
+          this.quizzes.push(record.step);
+          continue;
+        }
+        // An action ends this page, so held quizzes go out before it rather than being lost.
+        if (record.step?.action)
+          for (const step of this.quizzes.splice(0))
+            lessons.push(this.commit(step));
+        lessons.push(this.commit(record.step));
         // Later pages need a new screenshot after this action finishes.
         if (record.step.action) {
           this.ended = true;
@@ -99,6 +99,24 @@ export class LessonStream {
       throw new Error("Teaching segment is too large.");
     return lessons;
   }
+  private check(steps: LessonStep[]) {
+    const lesson: Lesson = { ...this.header!, steps };
+    const issue = segmentIssue(lesson);
+    if (issue)
+      throw new Error(
+        `Teaching segment ${steps.length}: ${issue}.${this.lesson ? " Earlier valid parts remain available." : ""}`,
+      );
+    if (
+      (this.mode === "screen" || this.mode === "both") &&
+      steps.at(-1)?.annotations?.some((a) => a.motion)
+    )
+      throw new Error("Screen annotations must be static.");
+    return lesson;
+  }
+  private commit(step: LessonStep) {
+    this.lesson = this.check([...(this.lesson?.steps || []), step]);
+    return this.lesson;
+  }
   finish() {
     const last = this.push("\n");
     if (!this.ended || !this.lesson)
@@ -109,6 +127,10 @@ export class LessonStream {
   }
 }
 
+export const requestsQuiz = (question: string) =>
+  /\b(?:quiz(?:zes)?|test me|test my (?:knowledge|understanding))\b/i.test(
+    question,
+  );
 export const requestsVisual = (question: string) =>
   /\b(draw|diagram|illustrat\w*|visuali[sz]\w*|sketch|anatom\w*|flow\s?chart|map)\b/i.test(
     question,

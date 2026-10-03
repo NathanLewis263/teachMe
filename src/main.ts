@@ -270,36 +270,72 @@ function restoreMarks() {
   marksHidden = false;
   publishLesson();
 }
-// The board stays on screen during tracking captures, so blank it out of the comparison.
-function maskBoard(pixels: ScreenPixels, display: Electron.Display) {
+// The board, and marks the learner pinned on, stay on screen during tracking captures,
+// so blank them out of the comparison.
+function maskOverlay(pixels: ScreenPixels, display: Electron.Display) {
+  const { width, height } = pixels;
+  // Each box uses display fractions.
+  const boxes: { x: number; y: number; width: number; height: number }[] = [];
   const region = boardRegion;
-  if (!region || !overlay.isVisible()) return pixels;
-  const origin = overlay.getBounds();
-  const scale = pixels.width / display.bounds.width;
-  const left = Math.max(
-    0,
-    Math.floor((origin.x + region.x - display.bounds.x) * scale),
-  );
-  const top = Math.max(
-    0,
-    Math.floor((origin.y + region.y - display.bounds.y) * scale),
-  );
-  const right = Math.min(pixels.width, Math.ceil(left + region.width * scale));
-  const bottom = Math.min(
-    pixels.height,
-    Math.ceil(top + region.height * scale),
-  );
-  for (let y = top; y < bottom; y++)
-    pixels.data.fill(
-      128,
-      (y * pixels.width + left) * 4,
-      (y * pixels.width + right) * 4,
-    );
+  if (region && overlay.isVisible()) {
+    const origin = overlay.getBounds();
+    boxes.push({
+      x: (origin.x + region.x - display.bounds.x) / display.bounds.width,
+      y: (origin.y + region.y - display.bounds.y) / display.bounds.height,
+      width: region.width / display.bounds.width,
+      height: region.height / display.bounds.height,
+    });
+  }
+  if (marksMode === "shown")
+    for (const mark of pinnedMarks())
+      boxes.push({
+        x: mark.x - 0.02,
+        y: mark.y - 0.02,
+        width: mark.width + 0.04,
+        height: mark.height + 0.04,
+      });
+  for (const box of boxes) {
+    const left = Math.max(0, Math.floor(box.x * width));
+    const right = Math.min(width, Math.ceil((box.x + box.width) * width));
+    const top = Math.max(0, Math.floor(box.y * height));
+    const bottom = Math.min(height, Math.ceil((box.y + box.height) * height));
+    for (let y = top; y < bottom && left < right; y++)
+      pixels.data.fill(128, (y * width + left) * 4, (y * width + right) * 4);
+  }
   return pixels;
 }
+// The learner can pin marks on, overriding tracking that lost them, or hide them.
+let marksMode: "auto" | "shown" | "hidden" = "auto";
+let reportMarks: (state: {
+  available: boolean;
+  visible: boolean;
+}) => void = () => {};
+// Every mark drawn for the visible slide, before tracking or expiry removes any.
+function lessonMarks(): Annotation[] {
+  if (!activeLesson || lessonStep < 0) return [];
+  return activeLesson.steps
+    .slice(annotationStart, (viewedStep ?? lessonStep) + 1)
+    .reduce(applyDrawingStep, [] as Annotation[]);
+}
+function pinnedMarks(): Annotation[] {
+  const marks = lessonMarks();
+  const beforeScroll = referencePixels;
+  const afterScroll = scrolledPixels;
+  if (!beforeScroll || !afterScroll || coordinatesInvalid) return marks;
+  // Keep tracked positions where they were found and the drawn position otherwise.
+  return marks.map(
+    (mark) => trackAnnotation(mark, beforeScroll, afterScroll) ?? mark,
+  );
+}
+function toggleMarks() {
+  if (!lessonMarks().length) return;
+  marksMode = visibleAnnotations().length ? "hidden" : "shown";
+  publishLesson();
+}
 function visibleAnnotations(): Annotation[] {
-  if (coordinatesInvalid || scrollHidden || marksHidden || !activeLesson)
-    return [];
+  if (marksHidden || !activeLesson || marksMode === "hidden") return [];
+  if (marksMode === "shown") return pinnedMarks();
+  if (coordinatesInvalid || scrollHidden) return [];
   const marks =
     viewedStep === undefined
       ? lessonAnnotations
@@ -347,7 +383,7 @@ function scheduleScrollTracking() {
         const source = await captureDisplay(display, 800);
         if (id !== turn || revision !== scrollRevision) return;
         if (!source || source.thumbnail.isEmpty()) return;
-        scrolledPixels = maskBoard(screenPixels(source.thumbnail), display);
+        scrolledPixels = maskOverlay(screenPixels(source.thumbnail), display);
         scrollHidden = false;
       } catch {
         // Unavailable or ambiguous targets remain hidden.
@@ -403,6 +439,7 @@ function cancelTeacher(notify = true, forgetHistory = false) {
   coordinatesInvalid = false;
   scrollCaptures = 0;
   marksHidden = false;
+  marksMode = "auto";
   annotationStart = 0;
   automaticChecks = 0;
   clearDisplay();
@@ -420,6 +457,7 @@ function cancelTeacher(notify = true, forgetHistory = false) {
   screenTurn = false;
   lessonAllowsScreen = false;
   overlay.webContents.send("lesson-clear");
+  reportMarks({ available: false, visible: false });
   if (notify) controls.webContents.send("teacher-cancel");
 }
 let activeLesson: Lesson | undefined;
@@ -437,9 +475,15 @@ function publishLesson() {
     screenTurn &&
     Date.now() > screenDeadline &&
     !actionGate &&
-    !coordinatesInvalid
+    !coordinatesInvalid &&
+    marksMode !== "shown"
   )
     return;
+  const annotations = visibleAnnotations();
+  reportMarks({
+    available: lessonMarks().length > 0,
+    visible: annotations.length > 0,
+  });
   overlay.webContents.send("lesson", {
     viewport: {
       x: target.x - content.x,
@@ -451,7 +495,7 @@ function publishLesson() {
     step: viewedStep ?? lessonStep,
     live: lessonStep,
     turn,
-    annotations: visibleAnnotations(),
+    annotations,
   });
 }
 
@@ -531,9 +575,12 @@ app.whenReady().then(() => {
       controls.hide();
     }
   });
-  const pet = createPet(controls, (newQuestion = false) =>
-    cancelTeacher(true, !newQuestion),
+  const pet = createPet(
+    controls,
+    (newQuestion = false) => cancelTeacher(true, !newQuestion),
+    toggleMarks,
   );
+  reportMarks = pet.marks;
   const authorize = (event: Electron.IpcMainInvokeEvent) => {
     if (
       event.sender !== controls.webContents ||
@@ -542,8 +589,18 @@ app.whenReady().then(() => {
       throw new Error("Invalid sender");
   };
   globalShortcut.register("CommandOrControl+Shift+Escape", pet.cancel);
-  screen.on("display-metrics-changed", () => cancelTeacher());
-  screen.on("display-removed", () => cancelTeacher());
+  // Marks use the lesson display's coordinates. Dock or menu bar changes only move
+  // the work area, and other displays do not matter, so neither cancels the lesson.
+  screen.on("display-metrics-changed", (_event, display, changed) => {
+    if (
+      display.id === lessonDisplay?.id &&
+      changed.some((metric) => metric !== "workArea")
+    )
+      cancelTeacher();
+  });
+  screen.on("display-removed", (_event, display) => {
+    if (display.id === lessonDisplay?.id) cancelTeacher();
+  });
   ipcMain.handle("teacher-status", (event) => {
     authorize(event);
     return {
@@ -997,7 +1054,27 @@ app.whenReady().then(() => {
       return;
     // Browsing changes the slide, not the speech queue. Returning to the live slide follows narration again.
     viewedStep = index === lessonStep ? undefined : index;
+    // Moving past the live quiz releases narration for the next question.
+    if (index > lessonStep && activeLesson.steps[lessonStep]?.quiz)
+      continueQuiz();
     publishLesson();
+  });
+  function continueQuiz() {
+    controls.webContents.send("teacher-quiz-continue", {
+      turn,
+      index: lessonStep,
+    });
+  }
+  ipcMain.handle("quiz-continue", (event, id, index) => {
+    if (
+      event.sender !== overlay.webContents ||
+      event.senderFrame !== event.sender.mainFrame ||
+      id !== turn ||
+      index !== lessonStep ||
+      !activeLesson?.steps[lessonStep]?.quiz
+    )
+      return;
+    continueQuiz();
   });
   ipcMain.handle("teacher-speech", async (event, id, index) => {
     authorize(event);
@@ -1089,6 +1166,7 @@ app.whenReady().then(() => {
     }
     overlay.showInactive();
     lessonStep = index;
+    if (viewedStep === index) viewedStep = undefined;
     // Reading mode reveals without speech, so drop audio prepared for this step.
     if (preparedSpeech && preparedSpeech.index <= index) {
       preparedSpeech.speech.cancel();

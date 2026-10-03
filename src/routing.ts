@@ -1,5 +1,6 @@
 // Choose what to read separately from where to draw; a screenshot can feed a whiteboard.
 import { choice, TypeSafeClient } from "@typesafe-ai/sdk";
+import { requestsQuiz } from "./lesson-stream";
 
 export type ContextChoice = "none" | "screenshot";
 export type RenderChoice = "none" | "whiteboard" | "screen" | "both";
@@ -34,6 +35,8 @@ export function explicitOverrides(question: string): RouteOverrides {
     result.rendering = "none";
   else if (/\b(?:on|use) (?:the |a )?whiteboard\b/i.test(question))
     result.rendering = "whiteboard";
+  // Quiz questions are clicked on the board, so a spoken reply cannot hold them.
+  else if (requestsQuiz(question)) result.rendering = "whiteboard";
   else if (
     /\b(?:annotate|draw on|highlight on|circle on) (?:my |the )?screen\b/i.test(
       question,
@@ -142,7 +145,7 @@ export async function routeQuestion(
             {
               none: "Spoken reply without drawing, including brief conversation.",
               whiteboard:
-                "Independent explanation, notes, original diagram, or worked example.",
+                "Independent explanation, notes, original diagram, worked example, or quiz.",
               screen:
                 "Only annotate visible targets in the current app, using screenshot geometry.",
               both: "Whiteboard explanation together with marks on visible screen targets.",

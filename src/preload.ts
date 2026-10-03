@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("teachMe", {
     ipcRenderer.invoke("teacher-check", turn, index),
   browse: (turn: number, index: number) =>
     ipcRenderer.invoke("board-browse", turn, index),
+  quizContinue: (turn: number, index: number) =>
+    ipcRenderer.invoke("quiz-continue", turn, index),
   boardRegion: (region: unknown) => ipcRenderer.send("board-region", region),
   petCommand: (command: string, value?: unknown) =>
     ipcRenderer.invoke("pet-command", command, value),
@@ -31,6 +33,7 @@ contextBridge.exposeInMainWorld("teachMe", {
         "pet-state",
         "pet-detail",
         "pet-bubble",
+        "pet-marks",
         "teacher-bubble-action",
         "show-course-files",
         "pet-level",
@@ -40,6 +43,7 @@ contextBridge.exposeInMainWorld("teachMe", {
         "teacher-segment",
         "teacher-cancel",
         "teacher-check-state",
+        "teacher-quiz-continue",
         "lesson-clear",
         "lesson",
       ].includes(channel)

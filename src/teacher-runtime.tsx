@@ -34,6 +34,11 @@ export function TeacherRuntime() {
     undefined,
   );
   const actionWait = useRef<(() => void) | undefined>(undefined);
+  // Quiz steps the learner moved past, by "turn:index"; a click can land before narration ends.
+  const quizReleased = useRef(new Set<string>());
+  const quizWait = useRef<{ key: string; resolve: () => void } | undefined>(
+    undefined,
+  );
   const [waiting, setWaiting] = useState(false);
   const [paused, setPaused] = useState(false);
   const playbackRequest = useRef(0);
@@ -49,6 +54,9 @@ export function TeacherRuntime() {
     readingWait.current = undefined;
     actionWait.current?.();
     actionWait.current = undefined;
+    quizWait.current?.resolve();
+    quizWait.current = undefined;
+    quizReleased.current.clear();
     watchedAction.current = undefined;
     setCheckpoint(undefined);
     setChecking(false);
@@ -89,6 +97,14 @@ export function TeacherRuntime() {
         actionWait.current?.();
       }
     });
+    const quizContinue = api().subscribe(
+      "teacher-quiz-continue",
+      (value: { turn: number; index: number }) => {
+        const key = `${value.turn}:${value.index}`;
+        quizReleased.current.add(key);
+        if (quizWait.current?.key === key) quizWait.current.resolve();
+      },
+    );
     const segments = api().subscribe("teacher-segment", (value) =>
       enqueueSegment.current(value),
     );
@@ -120,6 +136,7 @@ export function TeacherRuntime() {
       cancel();
       progress();
       segments();
+      quizContinue();
       checkState();
       stopLocal();
     };
@@ -234,9 +251,22 @@ export function TeacherRuntime() {
           }
           if (id !== operation.current) return;
           if (!revealed) await reveal(plan, index, id);
+          // Cancel may finish while the board is revealing the step.
+          if (id !== operation.current) return;
           const action = plan.lesson.steps[index].action;
-          // Let the student act before starting the next narration.
-          if (action && id === operation.current) {
+          const quizKey = `${plan.turn}:${index}`;
+          // Hold the next question until the learner answers or moves on; they may already have.
+          if (plan.lesson.steps[index].quiz) {
+            if (!quizReleased.current.has(quizKey)) {
+              setStatus("Answer on the board");
+              await new Promise<void>((resolve) => {
+                quizWait.current = { key: quizKey, resolve };
+              });
+              if (id !== operation.current) return;
+              quizWait.current = undefined;
+            }
+          } else if (action && id === operation.current) {
+            // Let the student act before starting the next narration.
             setStatus(
               action.sensitive
                 ? "Screen checks are off for this step"

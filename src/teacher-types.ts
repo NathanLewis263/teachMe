@@ -34,6 +34,7 @@ export interface AppBridge {
     index: number,
   ): Promise<{ complete: boolean; message: string }>;
   browse(turn: number, index: number): Promise<void>;
+  quizContinue(turn: number, index: number): Promise<void>;
   boardRegion(
     region: {
       x: number;

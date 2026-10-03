@@ -30,6 +30,8 @@ export const boardInk: Record<Ink, string> = {
 };
 export type Ink = keyof typeof ink;
 export type LessonTable = { columns: string[]; rows: string[][] };
+export type QuizOption = { text: string; correct: boolean; why: string };
+export type LessonQuiz = { question: string; options: QuizOption[] };
 export type LessonStep = {
   say: string;
   action?: ActionCheckpoint;
@@ -37,6 +39,7 @@ export type LessonStep = {
   body?: string;
   formula?: string;
   table?: LessonTable;
+  quiz?: LessonQuiz;
   scene?: SceneEdit;
   label?: string;
   detail?: string;
@@ -82,6 +85,25 @@ export function validTable(value: unknown): value is LessonTable {
     )
   );
 }
+// One multiple-choice question; every option explains itself so feedback needs no model call.
+export function validQuiz(value: unknown): value is LessonQuiz {
+  if (!value || typeof value !== "object") return false;
+  const quiz = value as LessonQuiz;
+  return (
+    short(quiz.question, 200) &&
+    Array.isArray(quiz.options) &&
+    quiz.options.length >= 3 &&
+    quiz.options.length <= 4 &&
+    quiz.options.every(
+      (option) =>
+        !!option &&
+        short(option.text, 100) &&
+        typeof option.correct === "boolean" &&
+        short(option.why, 240),
+    ) &&
+    quiz.options.filter((option) => option.correct).length === 1
+  );
+}
 export function validLesson(value: unknown): value is Lesson {
   if (!value || typeof value !== "object") return false;
   const a = value as Lesson;
@@ -102,6 +124,10 @@ export function validLesson(value: unknown): value is Lesson {
         (step.body === undefined || short(step.body, 700)) &&
         (step.formula === undefined || short(step.formula, 240)) &&
         (step.table === undefined || validTable(step.table)) &&
+        (step.quiz === undefined ||
+          ((a.kind === "scene" || a.kind === "notes") &&
+            step.action === undefined &&
+            validQuiz(step.quiz))) &&
         (step.scene === undefined ||
           (a.kind === "scene" && validSceneEdit(step.scene))) &&
         (a.kind === "drawing" ||
@@ -110,7 +136,8 @@ export function validLesson(value: unknown): value is Lesson {
         (a.kind === "flow" ||
           (step.label === undefined && step.detail === undefined)) &&
         (a.kind !== "scene" || (!step.formula && !step.table)) &&
-        (a.kind !== "notes" || !!(step.body || step.formula || step.table)) &&
+        (a.kind !== "notes" ||
+          !!(step.body || step.formula || step.table || step.quiz)) &&
         (a.kind !== "flow" ||
           (!step.body && !step.formula && !step.table && !step.heading)) &&
         (a.kind !== "flow" ||
