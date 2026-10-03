@@ -118,3 +118,88 @@ export function layoutLabels(
   });
   return labels;
 }
+
+// Aim arrows at marked controls because the model can misjudge their boxes.
+export function aimArrows(
+  annotations: Annotation[],
+  width: number,
+  height: number,
+): Annotation[] {
+  const targets = annotations
+    .filter(
+      (annotation) =>
+        (annotation.kind === "highlight" || annotation.kind === "ellipse") &&
+        annotation.width > 0 &&
+        annotation.height > 0,
+    )
+    .map((annotation) => ({
+      kind: annotation.kind,
+      x: annotation.x * width,
+      y: annotation.y * height,
+      width: annotation.width * width,
+      height: annotation.height * height,
+    }));
+  return annotations.map((a) => {
+    if (a.kind !== "arrow" || !targets.length) return a;
+    const tail = { x: a.x * width, y: a.y * height };
+    const tip = { x: (a.x + a.width) * width, y: (a.y + a.height) * height };
+    const length = Math.hypot(tip.x - tail.x, tip.y - tail.y);
+    const distance = (box: (typeof targets)[number]) =>
+      Math.hypot(
+        Math.max(box.x - tip.x, 0, tip.x - (box.x + box.width)),
+        Math.max(box.y - tip.y, 0, tip.y - (box.y + box.height)),
+      );
+    const target = targets.reduce((best, candidate) =>
+      distance(candidate) < distance(best) ? candidate : best,
+    );
+    // Leave arrows that clearly point somewhere else alone.
+    if (distance(target) > Math.max(200, length * 1.5)) return a;
+    const center = {
+      x: target.x + target.width / 2,
+      y: target.y + target.height / 2,
+    };
+    let start = tail;
+    let dx = start.x - center.x,
+      dy = start.y - center.y;
+    // A tail inside the target cannot aim at it, so start from just outside instead.
+    const inside =
+      Math.abs(dx) <= target.width / 2 && Math.abs(dy) <= target.height / 2;
+    if (inside) {
+      dx = -(tip.x - tail.x);
+      dy = -(tip.y - tail.y);
+      if (!dx && !dy) dx = -1;
+    }
+    const rx = target.width / 2,
+      ry = target.height / 2;
+    const edgeScale =
+      target.kind === "ellipse"
+        ? 1 / Math.hypot(dx / rx, dy / ry)
+        : Math.min(
+            dx ? rx / Math.abs(dx) : Infinity,
+            dy ? ry / Math.abs(dy) : Infinity,
+          );
+    const directionLength = Math.hypot(dx, dy);
+    const edge = {
+      x: center.x + dx * edgeScale + (dx / directionLength) * 8,
+      y: center.y + dy * edgeScale + (dy / directionLength) * 8,
+    };
+    // Keep the arrow long enough to read as an arrow.
+    const reach = Math.max(70, Math.min(length, 220));
+    if (inside || Math.hypot(start.x - edge.x, start.y - edge.y) < 50)
+      start = {
+        x: edge.x + (dx / directionLength) * reach,
+        y: edge.y + (dy / directionLength) * reach,
+      };
+    start = {
+      x: Math.min(width - 4, Math.max(4, start.x)),
+      y: Math.min(height - 4, Math.max(4, start.y)),
+    };
+    return {
+      ...a,
+      x: start.x / width,
+      y: start.y / height,
+      width: (edge.x - start.x) / width,
+      height: (edge.y - start.y) / height,
+    };
+  });
+}

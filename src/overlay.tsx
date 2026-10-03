@@ -3,7 +3,7 @@ import { placeBoard } from "./board-placement";
 import { SceneView } from "./scene-view";
 import React, { useEffect, useRef, useState } from "react";
 import { validAnnotation, type Annotation } from "./contracts";
-import { annotationPath, layoutLabels } from "./drawing";
+import { aimArrows, annotationPath, layoutLabels } from "./drawing";
 import {
   ink,
   boardInk,
@@ -85,6 +85,7 @@ function AnnotationLayer({
   offset?: { x: number; y: number };
 }) {
   const labels = layoutLabels(annotations, width, height);
+  const strokes = aimArrows(annotations, width, height);
   return (
     <svg
       className="desktop-annotations"
@@ -92,7 +93,7 @@ function AnnotationLayer({
       viewBox={`0 0 ${width} ${height}`}
       aria-hidden="true"
     >
-      {annotations.map((a, index) => (
+      {strokes.map((a, index) => (
         <Stroke
           key={a.id || JSON.stringify(a)}
           a={a}
@@ -436,22 +437,29 @@ export function Overlay() {
         }),
       ),
     );
+    // A new board starts flush with the bottom-left corner of the usable screen area.
+    const area = lesson.workArea || viewport;
+    const origin = (height: number) =>
+      position
+        ? { x: boardBounds.x, y: boardBounds.y }
+        : { x: area.x, y: area.y + area.height - height };
     const full = placeBoard(
-      { x: boardBounds.x, y: boardBounds.y, ...fullBoardSize.current },
-      viewport,
+      { ...origin(fullBoardSize.current.height), ...fullBoardSize.current },
+      area,
       targets,
+      0,
     );
     const shouldCompact = minimized || (full.blocked && !expanded);
     const next = shouldCompact
       ? placeBoard(
           {
-            x: boardBounds.x,
-            y: boardBounds.y,
+            ...origin(56),
             width: Math.min(360, viewport.width - 40),
             height: 56,
           },
-          viewport,
+          area,
           targets,
+          0,
         )
       : full;
     setCompact(shouldCompact);
@@ -509,7 +517,11 @@ export function Overlay() {
             ref={board}
             className={`lesson-board${lesson.lesson.kind === "drawing" ? " screen-caption" : ""}${lesson.lesson.kind === "scene" && quiz ? " board-wide" : ""}${compact ? " board-compact" : ""}`}
             aria-label={lesson.lesson.title}
-            style={position ? { left: position.x, top: position.y } : undefined}
+            style={
+              position
+                ? { left: position.x, top: position.y, bottom: "auto" }
+                : undefined
+            }
           >
             <header
               className="lesson-heading board-drag-handle"

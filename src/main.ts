@@ -53,6 +53,8 @@ import type { LessonRequest } from "./teacher-types";
 import { indexCourse, loadCourse, removeCourse } from "./course";
 let providerAbort = new AbortController();
 let screenTurn = false;
+// True once the last page is planned, so input after the final step can clear the marks.
+let lessonPlanned = false;
 let lessonAllowsScreen = false;
 let actionGate: ActionGate | undefined;
 let checkAbort = new AbortController();
@@ -491,6 +493,7 @@ function cancelTeacher(notify = true, forgetHistory = false) {
   viewedStep = undefined;
   boardRegion = null;
   screenTurn = false;
+  lessonPlanned = false;
   lessonAllowsScreen = false;
   overlay.webContents.send("lesson-clear");
   reportMarks({ available: false, visible: false });
@@ -526,6 +529,13 @@ function publishLesson() {
       y: target.y - content.y,
       width: target.width,
       height: target.height,
+    },
+    // The area outside the Dock and menu bar, where the board spawns.
+    workArea: {
+      x: lessonDisplay.workArea.x - content.x,
+      y: lessonDisplay.workArea.y - content.y,
+      width: lessonDisplay.workArea.width,
+      height: lessonDisplay.workArea.height,
     },
     lesson: activeLesson,
     step: viewedStep ?? lessonStep,
@@ -742,6 +752,7 @@ app.whenReady().then(() => {
     if (id !== turn) throw new Error("Cancelled");
     controls.webContents.send("teacher-progress", "Planning");
     lessonStep = -1;
+    lessonPlanned = false;
     lessonAnnotations = [];
     screenTurn = route.rendering === "screen" || route.rendering === "both";
     screenDeadline = capturedAt + 120_000;
@@ -927,6 +938,7 @@ app.whenReady().then(() => {
       } else await readNewPage(checkpoint.sensitive);
       controls.webContents.send("teacher-progress", "Planning the next step");
     }
+    if (id === turn) lessonPlanned = true;
     previousLesson = JSON.stringify(result.lesson).slice(0, 16000);
     recentConversation.push(
       `User: ${request.question.slice(0, 480)}`,
@@ -999,6 +1011,22 @@ app.whenReady().then(() => {
       point.y <= bounds.y + region.y + region.height
     )
       return;
+    // The lesson is over, so any input on the lesson display removes its marks for good.
+    if (
+      lessonPlanned &&
+      activeLesson &&
+      lessonStep >= activeLesson.steps.length - 1 &&
+      (!actionGate || actionGate.confirmed)
+    ) {
+      if (
+        point &&
+        lessonDisplay &&
+        screen.getDisplayNearestPoint(point).id !== lessonDisplay.id
+      )
+        return;
+      invalidateAction();
+      return;
+    }
     if (kind === "scroll") {
       if (
         point &&

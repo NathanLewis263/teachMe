@@ -5,8 +5,12 @@ const overlap = (a: Rect, b: Rect) =>
   Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
 
 // Keep the current position unless a highlighted target needs the space.
-export function placeBoard(current: Rect, viewport: Rect, targets: Rect[]) {
-  const inset = 12;
+export function placeBoard(
+  current: Rect,
+  viewport: Rect,
+  targets: Rect[],
+  inset = 12,
+) {
   const minX = viewport.x + inset,
     minY = viewport.y + inset;
   const maxX = Math.max(

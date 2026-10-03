@@ -63,6 +63,7 @@ export type LessonFrame = {
   live?: number;
   annotations: Annotation[];
   viewport?: { x: number; y: number; width: number; height: number };
+  workArea?: { x: number; y: number; width: number; height: number };
 };
 const short = (value: unknown, max: number) =>
   typeof value === "string" && value.trim().length > 0 && value.length <= max;

@@ -49,8 +49,9 @@
   display: flex;
   flex-direction: column;
   position: fixed;
-  left: 40px;
-  top: 12vh;
+  /* Placement then lifts it above the Dock to the work area's bottom-left corner. */
+  left: 0;
+  bottom: 0;
   width: min(680px, calc(100vw - 48px));
   /* Grow to the screen when content needs it; placement keeps the board on screen. */
   max-height: calc(100vh - 24px);
@@ -301,7 +302,6 @@ summary:focus-visible {
 }
 @media (max-width: 900px) {
   .lesson-board {
-    left: 20px;
     width: min(680px, calc(100vw - 40px));
   }
 }
