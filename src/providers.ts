@@ -50,6 +50,8 @@ export async function planLesson(
   const fastMode =
     process.env.OPENAI_FAST_MODE?.trim().toLowerCase() === "true";
   const abort = new AbortController();
+  // The SDK ends a stream quietly when its signal aborts, so keep the timeout to report it.
+  const timeout = AbortSignal.timeout(150_000);
   let completed = false;
   const withSources = (lesson: Lesson): Lesson => ({
     ...lesson,
@@ -84,11 +86,8 @@ export async function planLesson(
         input: [{ role: "user", content }],
       },
       {
-        signal: AbortSignal.any([
-          signal,
-          abort.signal,
-          AbortSignal.timeout(90_000),
-        ]),
+        signal: AbortSignal.any([signal, abort.signal, timeout]),
+        timeout: 150_000,
       },
     );
     for await (const event of stream) {
@@ -116,9 +115,12 @@ export async function planLesson(
         );
       }
     }
+    signal.throwIfAborted();
     if (!completed)
       throw new Error(
-        "Lesson connection ended early. Earlier validated stages remain available.",
+        timeout.aborted
+          ? "Lesson planning took longer than 150 seconds. Earlier validated stages remain available. Try a narrower question."
+          : "Lesson connection ended early. Earlier validated stages remain available.",
       );
     for (const lesson of parser.finish()) segment(withSources(lesson));
     return { lesson: withSources(parser.lesson!) };

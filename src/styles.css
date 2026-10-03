@@ -890,6 +890,11 @@ body {
 .pet-bubble header .bubble-play {
   width: 28px;
   height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: #f3f7f5;
