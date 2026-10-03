@@ -21,6 +21,7 @@ import {
   systemPreferences,
   globalShortcut,
   shell,
+  dialog,
 } from "electron";
 import path from "node:path";
 import { encodeScreen } from "./capture";
@@ -41,6 +42,7 @@ import {
 } from "./providers";
 import { speechChunks } from "./speech-stream";
 import type { LessonRequest } from "./teacher-types";
+import { indexCourse, loadCourse, removeCourse } from "./course";
 let providerAbort = new AbortController();
 let screenTurn = false;
 let actionGate: ActionGate | undefined;
@@ -367,6 +369,9 @@ app.whenReady().then(() => {
     cancelTeacher(false);
     const id = turn;
     const signal = providerAbort.signal;
+    // Keep Stop effective while the saved course ID is loading.
+    const course = await loadCourse();
+    if (id !== turn || signal.aborted) throw new Error("Cancelled");
     controls.webContents.send("teacher-progress", "Choosing context");
     const route = await routeQuestion(
       request.question,
@@ -445,6 +450,7 @@ app.whenReady().then(() => {
       },
       image,
       previous,
+      course?.vectorStoreId,
       signal,
       (lesson) => {
         if (id !== turn || signal.aborted) return;
@@ -469,6 +475,21 @@ app.whenReady().then(() => {
     );
     recentConversation.splice(0, Math.max(0, recentConversation.length - 4));
     return { turn: id, ...result };
+  });
+  ipcMain.handle("course", async (event, action: unknown) => {
+    authorize(event);
+    if (action === "choose") {
+      const { canceled, filePaths } = await dialog.showOpenDialog(controls, {
+        title: "Choose a course folder",
+        properties: ["openDirectory"],
+      });
+      if (!canceled && filePaths[0]) await indexCourse(filePaths[0]);
+    } else if (action === "remove") await removeCourse();
+    else if (action !== "status") throw new Error("Invalid course action");
+    const course = await loadCourse();
+    return course
+      ? { folder: path.basename(course.folder), files: course.files }
+      : null;
   });
   ipcMain.on("board-region", (event, region) => {
     if (

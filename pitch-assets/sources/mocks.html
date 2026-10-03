@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .view { display: none; height: 100%; }
+  body[data-view="chat"] #chat, body[data-view="share"] #share, body[data-view="annotate"] #share { display: flex; }
+  .slide-frame { width: 1728px; height: 1117px; border: 0; transform-origin: 0 0; display: block; }
+
+  /* Split screen: lecture slide beside a chatbot */
+  #chat { background: #e9ecee; }
+  #chat .left { width: 50%; display: flex; align-items: center; justify-content: center; border-right: 1px solid #cfd5d8; }
+  #chat .left .clip { width: 820px; height: 530px; overflow: hidden; box-shadow: 0 6px 24px #0002; border-radius: 6px; }
+  #chat .left .slide-frame { transform: scale(0.4745); }
+  #chat .right { width: 50%; background: #fff; display: flex; flex-direction: column; }
+  .bar { padding: 18px 28px; border-bottom: 1px solid #e3e6e8; font-weight: 600; color: #333; font-size: 18px; display: flex; gap: 10px; align-items: center; }
+  .dot { width: 26px; height: 26px; border-radius: 50%; background: #9aa5ab; }
+  .thread { flex: 1; overflow: hidden; padding: 28px 40px; font-size: 16.5px; line-height: 1.62; color: #2b2f31; }
+  .me { margin-left: auto; width: fit-content; background: #eef1f3; padding: 12px 18px; border-radius: 18px; margin-bottom: 24px; }
+  .thread p { margin: 0 0 14px; }
+  .thread h4 { margin: 18px 0 8px; font-size: 17px; }
+  .thread ul { margin: 0 0 14px; padding-left: 22px; }
+  .composer { margin: 16px 28px 24px; border: 1px solid #d9dee1; border-radius: 22px; padding: 14px 20px; color: #9aa5ab; }
+  .fade { position: relative; }
+  .fade::after { content: ""; position: absolute; inset: auto 0 0 0; height: 120px; background: linear-gradient(#fff0, #fff); }
+
+  /* Video call with screen share */
+  #share { background: #1b1d21; color: #e8eaed; flex-direction: column; }
+  #share .top { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px; font-size: 15px; }
+  .pill { background: #d93838; color: #fff; padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 13px; }
+  #share .main { flex: 1; display: flex; gap: 16px; padding: 0 24px; min-height: 0; }
+  #share .stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; background: #000; border-radius: 10px; overflow: hidden; }
+  #share .stage .clip { width: 1209px; height: 782px; overflow: hidden; position: relative; }
+  #share .stage .slide-frame { transform: scale(0.7); }
+  .scribble { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+  body[data-view="annotate"] .scribble { display: block; }
+  .side { width: 340px; display: flex; flex-direction: column; gap: 12px; }
+  .tile { height: 190px; border-radius: 10px; background: #2c3036; display: flex; align-items: center; justify-content: center; position: relative; }
+  .avatar { width: 84px; height: 84px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 600; }
+  .name { position: absolute; left: 12px; bottom: 10px; font-size: 13px; background: #0007; padding: 3px 8px; border-radius: 4px; }
+  .speaking { outline: 3px solid #4fc08d; }
+  .chatbox { flex: 1; background: #24272c; border-radius: 10px; padding: 16px; font-size: 14px; line-height: 1.5; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
+  body[data-view="annotate"] .chatbox { display: none; }
+  .msg b { display: block; color: #9ab0c4; font-size: 12px; margin-bottom: 2px; }
+  .controls { display: flex; justify-content: center; gap: 14px; padding: 16px; }
+  .controls span { width: 48px; height: 48px; border-radius: 50%; background: #3a3f46; }
+  .controls span.end { background: #d93838; width: 72px; border-radius: 24px; }
+</style>
+</head>
+<body>
+<section class="view" id="chat">
+  <div class="left"><div class="clip"><iframe class="slide-frame" src="lecture-slide.html"></iframe></div></div>
+  <div class="right">
+    <div class="bar"><span class="dot"></span>AI Chat</div>
+    <div class="thread fade">
+      <div class="me">How do I find the period of a simple pendulum?</div>
+      <p>Great question! The period of a simple pendulum is one of the classic results in introductory mechanics, and there are several ways to approach it depending on how rigorous you want to be. Let's walk through the full derivation, the assumptions behind it, and some common extensions.</p>
+      <h4>1. Setting up the problem</h4>
+      <p>Consider a point mass <i>m</i> attached to a massless, inextensible string of length <i>L</i>, pivoting freely about a fixed point. Let θ be the angular displacement from the vertical. The forces acting on the bob are the tension in the string and the gravitational force <i>mg</i>. Resolving gravity into components parallel and perpendicular to the string, the tangential component is −<i>mg</i> sin θ, which acts as the restoring force.</p>
+      <h4>2. Equation of motion</h4>
+      <p>Applying Newton's second law along the arc, with arc length <i>s</i> = <i>L</i>θ, gives <i>mL</i> d²θ/dt² = −<i>mg</i> sin θ, which simplifies to d²θ/dt² + (<i>g</i>/<i>L</i>) sin θ = 0. This is a nonlinear second-order differential equation, and in general it does not have a solution in terms of elementary functions. Its exact solution involves the complete elliptic integral of the first kind, K(k), where k = sin(θ₀/2)…</p>
+      <h4>3. The small-angle approximation</h4>
+      <p>For small oscillations, sin θ ≈ θ (in radians), using the first term of the Taylor series sin θ = θ − θ³/3! + θ⁵/5! − … The equation becomes d²θ/dt² + (<i>g</i>/<i>L</i>)θ = 0, which is the equation for simple harmonic motion with angular frequency ω = √(<i>g</i>/<i>L</i>). The general solution is θ(t) = θ₀ cos(ωt + φ), where θ₀ is the amplitude and φ the phase constant, determined by initial conditions…</p>
+      <h4>4. Period</h4>
+      <p>Since T = 2π/ω, we get T = 2π√(<i>L</i>/<i>g</i>). Notice several important features of this result:</p>
+      <ul>
+        <li>The period is independent of the mass of the bob.</li>
+        <li>For small amplitudes, it is independent of the amplitude (isochronism).</li>
+        <li>It depends only on the length and the local gravitational field strength…</li>
+      </ul>
+      <p>For larger amplitudes, a useful correction is T ≈ 2π√(L/g)(1 + θ₀²/16 + 11θ₀⁴/3072 + …), and for a physical pendulum you would instead use the moment of inertia about the pivot…</p>
+    </div>
+    <div class="composer">Message AI Chat…</div>
+  </div>
+</section>
+
+<section class="view" id="share">
+  <div class="top"><span>Physics tutoring session · 32:14</span><span class="pill">● You are viewing Sam's screen</span><span>2 participants</span></div>
+  <div class="main">
+    <div class="stage"><div class="clip">
+      <iframe class="slide-frame" src="lecture-slide.html"></iframe>
+      <svg class="scribble" viewBox="0 0 1209 782" fill="none" stroke="#e5484d" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M95 520 C 60 470, 120 400, 220 405 C 330 412, 345 520, 260 560 C 190 590, 110 575, 95 520 Z"/>
+        <path d="M232 420 L 236 498 M 220 482 L 236 500 L 252 480"/>
+        <path d="M300 340 C 420 300, 520 300, 600 330"/>
+        <path d="M680 255 C 720 230, 800 228, 840 250 C 870 268, 850 300, 800 300 C 760 300, 700 290, 680 255"/>
+        <path d="M720 380 Q 760 360 800 395 T 880 400"/>
+        <path d="M640 470 l 120 0 M 700 440 l 0 60"/>
+      </svg>
+    </div></div>
+    <div class="side">
+      <div class="tile speaking"><div class="avatar" style="background:#4a6a8a">T</div><span class="name">Tutor</span></div>
+      <div class="tile"><div class="avatar" style="background:#6a5a8a">S</div><span class="name">Sam (presenting)</span></div>
+      <div class="chatbox">
+        <div class="msg"><b>Tutor</b>ok so for part b you want to start from the forces on the bob</div>
+        <div class="msg"><b>Tutor</b>the tangential component of gravity is mg sin θ, that's your restoring force. then use F = ma along the arc, a = L d²θ/dt²</div>
+        <div class="msg"><b>Sam</b>wait which part of the diagram is that</div>
+        <div class="msg"><b>Tutor</b>the bit along the swing direction, perpendicular to the string. hard to point at, one sec</div>
+        <div class="msg"><b>Tutor</b>then small angle so sin θ ≈ θ and you get SHM with ω = √(g/L), so T = 2π√(L/g)</div>
+      </div>
+    </div>
+  </div>
+  <div class="controls"><span></span><span></span><span></span><span class="end"></span></div>
+</section>
+<script>document.body.dataset.view = location.hash.slice(1) || "chat";</script>
+</body>
+</html>

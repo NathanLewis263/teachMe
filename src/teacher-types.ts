@@ -18,6 +18,7 @@ export type RoutedLessonRequest = Omit<LessonRequest, "mode" | "context"> & {
   mode: RenderChoice;
   context: ContextChoice;
 };
+export type CourseStatus = { folder: string; files: number } | null;
 export type PlannedLesson = {
   turn: number;
   lesson: Lesson;
@@ -52,6 +53,7 @@ export interface AppBridge {
     voice: boolean;
   }>;
   displays(): Promise<DisplayChoice[]>;
+  course(action: "status" | "choose" | "remove"): Promise<CourseStatus>;
   plan(request: LessonRequest): Promise<PlannedLesson>;
   speech(
     turn: number,
