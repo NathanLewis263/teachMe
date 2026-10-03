@@ -1,58 +1,61 @@
 # teachMe
 
-Original local Electron teaching overlay with a React renderer and locally compiled Tailwind CSS. No Hey Clicky code or assets are used.
+A little seal that sits on your desktop and helps explain what you're looking at. Hold Control + Shift to ask a question, then release to send it. It reads the selected screen, talks through the answer and draws on a whiteboard or over the screen.
 
-## Run
+Built with Electron, React and TypeScript. OpenAI generates the lesson. ElevenLabs handles transcription and speech.
 
-Use Node.js and npm. On this Mac, add `/usr/local/bin` to PATH if needed.
+## Run it
+
+You'll need Node.js, npm and API access for OpenAI and ElevenLabs.
 
 ```sh
-cd ~/Desktop/teachMe
 npm ci
+cp .env.example .env
+```
+
+Skip the copy if you already have a `.env`. Fill in `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID`, then run:
+
+```sh
 npm start
 ```
 
-## Realtime teacher
+The ElevenLabs key needs Speech-to-Text and Text-to-Speech permissions, plus access to the chosen voice. API calls cost money. Restart after changing `.env`. Shell environment variables take priority.
 
-Create `.env` in this folder, using `.env.example` as a guide:
+The defaults are `gpt-6.1-sol` for lessons and `eleven_flash_v2_5` for speech. `OPENAI_MODEL` and `ELEVENLABS_MODEL` override them. `OPENAI_FAST_MODE=true` requests premium Fast Mode; it's off by default. Speech plays at normal speed.
 
-```dotenv
-OPENAI_API_KEY=your-key
-OPENAI_REALTIME_MODEL=gpt-realtime-2.1
-OPENAI_REALTIME_VOICE=marin
-```
+On this Mac, add `/usr/local/bin` to your PATH if Node or npm isn't found.
 
-Restart the app after editing configuration. `.env` is ignored by Git. The main process reads the key and negotiates a WebRTC session through OpenAI's `/v1/realtime/calls` endpoint. Credentials never enter the React renderer. An API project with model access and API billing is required.
+## Using it
 
-Type a question or click **Try a pendulum explanation** to get spoken teaching and a diagram. Typed questions do not request microphone permission. Hold the talk button, wait for **Listening**, speak, then release. Space also works while the control panel is focused outside editable fields. macOS microphone permission is still required for voice input.
+- Hold Control + Shift anywhere to record. Release either key to ask. Very short taps are ignored, and recording stops after 60 seconds.
+- Drag the seal to move it. Right-click it, or use its menu bar icon, to turn wandering off or open Teaching controls.
+- In Teaching controls, type a question, choose a display and pick Whiteboard or Screen. Each question includes a screenshot, including questions in whiteboard mode.
+- Drag the whiteboard by its title bar. Previous and Next only change the visible slide. Speech and lesson generation keep going.
+- Stop & clear cancels recording, requests and playback. Command/Ctrl + Shift + Escape does the same.
 
-**Include my primary screen** sends one screenshot to OpenAI with each question. It starts off, so original diagrams need no screen capture. macOS Screen Recording permission is required when enabled. There is no additional consent dialog. The screenshot can include other visible apps and the teachMe panel. The app does not watch scrolling or later edits; ask again for a fresh screenshot.
+A slide appears when its speech starts. If speech isn't configured or fails, use Continue in the controls to read through the lesson. If generation stops early, the valid slides already received stay available.
 
-The model calls `teach_lesson` with short spoken steps. Each stage appears on the Realtime `output_audio_buffer.started` event, and the app waits for both response completion and `output_audio_buffer.stopped` before requesting the next narration. This synchronizes teaching stages with playback, not individual words. Earlier stages stay visible.
+## macOS permissions
 
-Lessons support connected pendulum diagrams with continuous small-angle motion, automatically laid-out process flows, and general SVG drawings. Pendulum motion is an ideal illustration without damping. Shapes can use mint, blue, amber, coral, violet or white. Within a drawing lesson, later steps can reuse a shape ID to edit its geometry, color or back-and-forth translation, or remove it by ID. The app validates bounds, colors, paths and motion endpoints. SVG content stays structured; no raw markup or scripts are executed. Text renders in display coordinates, with label collision avoidance.
+Enable Accessibility for Electron/teachMe so the global shortcut works. macOS may also ask for Input Monitoring. Use Enable voice permissions in the seal menu after granting access. Microphone permission is requested when you start recording.
 
-Screen images are encoded as JPEG and resized as needed to fit the negotiated WebRTC message-size limit, including base64 and JSON overhead. A final UTF-8 size check runs before every send. Compression can reduce readability of tiny text; show the relevant content at a readable size. **Stop & clear** or Escape closes the voice connection, stops microphone tracks and playback, and rejects late drawing calls. Starting a new question during an answer interrupts the previous session; completed conversations can continue in the same session.
+Screen Recording permission is needed to capture the selected display. Restart after granting it if capture still fails. Sleep, lock and Stop & clear cancel recording. The key hook tracks the shortcut state and doesn't store typed text.
 
-Expand **Drawing previews** to try the existing arrow, rectangle highlight, ellipse, line, triangle, star and curve without an API request. Their strokes animate over 850ms. Reduced-motion preferences show completed shapes immediately. Closing the panel exits the app. The overlay ignores mouse input so the student can keep using their own apps. Drawing does not click, type or run commands.
+## A few limits
 
-## Current scope
+Each question sends a screenshot and the question text to OpenAI. Voice recordings go to ElevenLabs, as does narration text. Check what's on the selected screen before asking. API keys stay in Electron's main process, outside React, and `.env` is ignored by Git.
 
-Electron owns two windows, a React control panel and a transparent SVG overlay. Both use isolated, sandboxed preload bridges and have no Node access. Main-process IPC validates the control sender and frame. The model only receives a drawing tool.
+Lessons stream as validated JSON. The model can't run code or control your apps. Requests have timeouts and no automatic retries. Screen annotations expire after two minutes because the screenshot may no longer match what's on screen.
 
-The overlay and capture target the primary display. Display bounds refresh at the start of each question. Moving or changing displays mid-explanation is not supported. Global hold shortcuts, uploaded unit documents, source citations, live documentation lookup and selectable teacher characters remain future work. The interfaces in `contracts.ts` retain a place for future unit retrieval.
+Diagrams are generated schematics. Complex anatomy can still look wrong, so use a clear labeled reference on screen when detail matters. Small screen text can be hard to read after compression. There are no file uploads or course retrieval. Ask another question to continue a topic.
 
 ## Checks
 
 ```sh
 npm run typecheck
 npm run build
+node --test tests/contracts.test.cjs
+npx --no-install prettier --check src tests/contracts.test.cjs README.md DESIGN.md package.json tsconfig.json
 ```
 
-For a live check, start the app, leave screen sharing off and ask the pendulum example. Verify speech, a diagram outside the panel and Stop & clear. Then test hold/release with microphone permission. Check capture separately using non-sensitive sample material. Live questions use your OpenAI API account.
-
-## Custom SVG paths
-
-Providers can return `kind: "path"` annotations with a `commands` array. Supported commands are `M`, `L`, `Q`, `C`, and `Z`, each with a `points` array of 2, 2, 4, 6, or 0 numbers respectively. Start with `M`. Coordinates and control points are normalized between 0 and 1 within the annotation's `x`, `y`, `width`, and `height` box. Paths are limited to 256 commands and use the same stroke animation as presets. Raw SVG file import is not implemented.
-
-Original subject diagrams now use a shared scene board: stable named shapes, attached arrows, smooth position edits, coordinated translation, pulse and wave effects. Screen annotations remain a separate option for marking a supplied reference. Lessons can have up to 12 stages per section; use **Continue this topic** after completion for another section, or ask to focus on a named structure. Detailed biology uses schematic explanations unless a labeled reference is supplied. The app does not include an anatomy atlas or course-file retrieval.
+These don't call the providers. Checking real answers, voice quality and screen placement needs a live run.
