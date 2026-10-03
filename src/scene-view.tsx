@@ -3,13 +3,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationPath } from "./drawing";
 import { boardInk as ink, type Lesson } from "./lesson";
 import {
-  linkPoints,
+  linkSegment,
   sceneLabels,
   motionNode,
   sceneForSteps,
   tweenNodes,
   type SceneNode,
 } from "./scene";
+
+let context: CanvasRenderingContext2D | null | undefined;
+// Measure label text in the pill font so pills fit their words.
+function measureLabel(text: string) {
+  context ??= document.createElement("canvas").getContext("2d");
+  if (!context) return text.length * 7.8;
+  context.font = "550 13px system-ui, sans-serif";
+  return context.measureText(text).width;
+}
 
 export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
   const scene = useMemo(
@@ -50,22 +59,23 @@ export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
     };
   }, [scene]);
   const links = scene.links
-    .map((link) => ({ link, points: linkPoints(link, frame.nodes) }))
+    .map((link) => ({ link, points: linkSegment(link, frame.nodes) }))
     .filter((item) => item.points !== null);
   const labelSources = [
     ...frame.nodes,
+    // Link labels sit beside the arrow's midpoint.
     ...links.map(({ link, points }) => ({
       kind: "line" as const,
-      x: Math.max(points![0].x, points![1].x) + 0.02,
-      y: Math.min(points![0].y, points![1].y),
+      x: (points![0].x + points![1].x) / 1600,
+      y: (points![0].y + points![1].y) / 960,
       width: 0,
       height: 0,
       label: link.label,
       id: `link-${link.id}`,
-      color: link.color,
+      color: link.color || "blue",
     })),
   ];
-  const labels = sceneLabels(labelSources, 800, 480);
+  const labels = sceneLabels(labelSources, 800, 480, measureLabel);
   return (
     <svg
       className="scene-svg"
@@ -82,6 +92,13 @@ export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
         >
           <circle cx="1" cy="1" r=".7" fill="#ffffff0b" />
         </pattern>
+        <filter id="scene-glow" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
       </defs>
       <rect width="800" height="480" fill="url(#scene-grid)" />
       {frame.nodes.map((node) => {
@@ -96,13 +113,16 @@ export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
             data-object={node.id}
             className="scene-object"
             opacity={pulse}
+            filter={node.effect === "pulse" ? "url(#scene-glow)" : undefined}
           >
             <path
+              className="scene-stroke"
+              pathLength={1}
               d={annotationPath(node, 800, 480)}
               stroke={color}
-              strokeWidth="2.5"
+              strokeWidth={node.color === "white" ? 2 : 2.5}
               fill={node.fill ? color : "none"}
-              fillOpacity=".14"
+              fillOpacity=".16"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
@@ -128,28 +148,41 @@ export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
       })}
       {links.map(({ link, points }) => {
         const [a, b] = points!;
-        const x1 = a.x * 800,
-          y1 = a.y * 480,
-          x2 = b.x * 800,
-          y2 = b.y * 480;
-        const angle = Math.atan2(y2 - y1, x2 - x1),
+        const angle = Math.atan2(b.y - a.y, b.x - a.x),
           color = ink[link.color || "blue"];
-        const tip = (offset: number) =>
-          `${x2 - 9 * Math.cos(angle + offset)} ${y2 - 9 * Math.sin(angle + offset)}`;
+        const arrow = link.arrow !== false;
+        // Stop the line at the base of a filled head so the tip stays sharp.
+        const head = Math.min(12, Math.hypot(b.x - a.x, b.y - a.y) * 0.4);
+        const base = {
+          x: b.x - head * Math.cos(angle),
+          y: b.y - head * Math.sin(angle),
+        };
+        const wing = (side: number) =>
+          `${base.x + head * 0.42 * Math.sin(angle) * side} ${base.y - head * 0.42 * Math.cos(angle) * side}`;
+        const end = arrow ? base : b;
         return (
           <g
             key={link.id}
             data-link={link.id}
             className="scene-object"
-            fill="none"
             stroke={color}
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
           >
-            <path d={`M ${x1} ${y1} L ${x2} ${y2}`} />
-            {link.arrow !== false && (
-              <path d={`M ${tip(-0.5)} L ${x2} ${y2} L ${tip(0.5)}`} />
+            <path
+              className="scene-stroke"
+              pathLength={1}
+              fill="none"
+              d={`M ${a.x} ${a.y} L ${end.x} ${end.y}`}
+            />
+            {arrow && (
+              <path
+                className="scene-head"
+                fill={color}
+                strokeWidth="1.5"
+                d={`M ${b.x} ${b.y} L ${wing(1)} L ${wing(-1)} Z`}
+              />
             )}
           </g>
         );
@@ -169,27 +202,43 @@ export function SceneView({ lesson, step }: { lesson: Lesson; step: number }) {
         );
         const ex = Math.max(label.x, Math.min(label.x + label.width, sx));
         const ey = Math.max(label.y, Math.min(label.y + label.height, sy));
+        const leader = Math.hypot(ex - sx, ey - sy) > 4;
         return (
           <g key={source.id} className="scene-label">
-            <path
-              d={`M ${sx} ${sy} L ${ex} ${ey}`}
-              stroke={color}
-              opacity=".35"
-              fill="none"
-            />
+            {leader && (
+              <>
+                <path
+                  d={`M ${sx} ${sy} L ${ex} ${ey}`}
+                  stroke={color}
+                  strokeWidth="1.2"
+                  opacity=".45"
+                  fill="none"
+                />
+                <circle cx={sx} cy={sy} r="2.6" fill={color} />
+              </>
+            )}
             <rect
               x={label.x}
               y={label.y}
               width={label.width}
               height={label.height}
-              rx="7"
-              fill="#14282f"
-              stroke="#ffffff1c"
+              rx={label.height / 2}
+              fill="#12252b"
+              fillOpacity=".94"
+              stroke={color}
+              strokeOpacity=".38"
+            />
+            <circle
+              cx={label.x + 13}
+              cy={label.y + label.height / 2}
+              r="3.2"
+              fill={color}
             />
             <text
-              x={label.x + 12}
-              y={label.y + 20}
-              fill={color}
+              x={label.x + 22}
+              y={label.y + label.height / 2}
+              dominantBaseline="central"
+              fill="#eef4f3"
               fontSize="13"
               fontWeight="550"
             >

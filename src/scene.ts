@@ -176,6 +176,57 @@ export function linkPoints(link: SceneLink, nodes: SceneNode[]) {
       : { x: a.x + (link.dx || 0), y: a.y + (link.dy || 0) },
   ];
 }
+// Trim a link to the edges of the shapes it joins, in board pixels, so arrows meet outlines instead of crossing them.
+export function linkSegment(
+  link: SceneLink,
+  nodes: SceneNode[],
+  width = 800,
+  height = 480,
+  gap = 5,
+) {
+  const points = linkPoints(link, nodes);
+  if (!points) return null;
+  let [a, b] = points.map((p) => ({ x: p.x * width, y: p.y * height }));
+  const from = nodes.find((n) => n.id === link.from)!,
+    to = nodes.find((n) => n.id === link.to);
+  // Leave an anchor that is already on the edge, and the free end of a force vector, where they are.
+  const exit = (
+    node: SceneNode,
+    start: { x: number; y: number },
+    toward: { x: number; y: number },
+  ) => {
+    const rx = (node.width * width) / 2,
+      ry = (node.height * height) / 2,
+      dx = toward.x - start.x,
+      dy = toward.y - start.y;
+    if (!rx || !ry || (!dx && !dy)) return start;
+    const t =
+      node.kind === "ellipse"
+        ? 1 / Math.hypot(dx / rx, dy / ry)
+        : Math.min(
+            dx ? rx / Math.abs(dx) : Infinity,
+            dy ? ry / Math.abs(dy) : Infinity,
+          );
+    // The other end lies inside this shape, so trimming would flip the arrow.
+    if (t >= 1) return start;
+    return { x: start.x + dx * t, y: start.y + dy * t };
+  };
+  const trimmedA =
+    (link.anchor || "center") === "center" ? exit(from, a, b) : a;
+  const trimmedB =
+    to && (link.toAnchor || "center") === "center" ? exit(to, b, a) : b;
+  a = trimmedA;
+  b = trimmedB;
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  // Pull both ends back slightly so the stroke does not merge with the outline.
+  if (length > gap * 4) {
+    const ux = (b.x - a.x) / length,
+      uy = (b.y - a.y) / length;
+    a = { x: a.x + ux * gap, y: a.y + uy * gap };
+    if (to) b = { x: b.x - ux * gap, y: b.y - uy * gap };
+  }
+  return [a, b] as const;
+}
 export function tweenNodes(
   previous: SceneNode[],
   next: SceneNode[],
@@ -196,7 +247,12 @@ export function tweenNodes(
 }
 
 // Find space for each label without covering shapes or labels already placed.
-export function sceneLabels(sources: Annotation[], width = 800, height = 480) {
+export function sceneLabels(
+  sources: Annotation[],
+  width = 800,
+  height = 480,
+  measure: (text: string) => number = (text) => text.length * 7.8,
+) {
   type Box = { x: number; y: number; width: number; height: number };
   const intersects = (a: Box, b: Box) =>
     a.x < b.x + b.width + 6 &&
@@ -214,8 +270,8 @@ export function sceneLabels(sources: Annotation[], width = 800, height = 480) {
   const labels: (Box & { text: string; index: number })[] = [];
   sources.forEach((source, index) => {
     if (!source.label) return;
-    const w = Math.min(width - 24, source.label.length * 7.8 + 24),
-      h = 30;
+    const w = Math.min(width - 24, Math.ceil(measure(source.label)) + 34),
+      h = 28;
     const x = source.x * width,
       y = source.y * height,
       sw = source.width * width,

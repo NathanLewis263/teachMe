@@ -122,7 +122,9 @@ function AnnotationLayer({
   );
 }
 function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
-  const colors = ["mint", "blue", "violet", "amber", "coral", "blue"] as const;
+  // One accent for the whole flow; position in the window no longer changes a stage's color.
+  const accent = boardInk[lesson.color || "mint"];
+  const first = Math.max(0, step - 5);
   return (
     <svg
       className="lesson-svg"
@@ -130,52 +132,80 @@ function Flow({ lesson, step }: { lesson: Lesson; step: number }) {
       role="img"
       aria-label={lesson.title}
     >
-      {lesson.steps
-        .slice(Math.max(0, step - 5), step + 1)
-        .map((item, index) => {
-          const y = 16 + index * 65,
-            color = boardInk[colors[index]];
-          return (
-            <g
-              key={index}
-              className="lesson-part"
-              opacity={index === Math.min(step, 5) ? 1 : 0.68}
-            >
-              {index > 0 && (
+      {lesson.steps.slice(first, step + 1).map((item, index) => {
+        const y = 14 + index * 66,
+          number = first + index + 1,
+          current = number === step + 1,
+          color = current ? accent : "#9fb4b8";
+        return (
+          <g key={number} className="lesson-part" opacity={current ? 1 : 0.72}>
+            {index > 0 && (
+              <>
                 <path
-                  d={`M 88 ${y - 12} V ${y - 3} m -4 -4 l 4 4 l 4 -4`}
-                  fill="none"
+                  d={`M 88 ${y - 13} V ${y - 6}`}
                   stroke={color}
                   strokeWidth="1.8"
+                  strokeLinecap="round"
                 />
-              )}
-              <rect
-                x="58"
-                y={y}
-                width="484"
-                height="52"
-                rx="12"
-                fill="#ffffff05"
-                stroke={index === Math.min(step, 5) ? color : "#ffffff20"}
-              />
-              <circle cx="88" cy={y + 26} r="4" fill={color} />
+                <path
+                  d={`M 83.5 ${y - 7} L 92.5 ${y - 7} L 88 ${y - 1} Z`}
+                  fill={color}
+                />
+              </>
+            )}
+            <rect
+              x="56"
+              y={y}
+              width="488"
+              height="52"
+              rx="14"
+              fill={current ? accent : "#ffffff"}
+              fillOpacity={current ? 0.08 : 0.025}
+              stroke={current ? accent : "#ffffff22"}
+              strokeOpacity={current ? 0.7 : 1}
+            />
+            <circle
+              cx="88"
+              cy={y + 26}
+              r="12"
+              fill={color}
+              fillOpacity={current ? 1 : 0.22}
+            />
+            <text
+              x="88"
+              y={y + 26}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fill={current ? "#10242a" : "#dfe9e8"}
+              fontSize="12"
+              fontWeight="700"
+            >
+              {number}
+            </text>
+            <text
+              x="114"
+              y={item.detail ? y + 21 : y + 26}
+              dominantBaseline="central"
+              fill={current ? "#f1f5f4" : "#c9d6d7"}
+              fontSize="15"
+              fontWeight="600"
+            >
+              {item.label}
+            </text>
+            {item.detail && (
               <text
-                x="108"
-                y={y + 22}
-                fill={color}
-                fontSize="15"
-                fontWeight="600"
+                x="114"
+                y={y + 38}
+                dominantBaseline="central"
+                fill="#a9bec1"
+                fontSize="11.5"
               >
-                {item.label}
+                {item.detail}
               </text>
-              {item.detail && (
-                <text x="108" y={y + 40} fill="#c0cfd1" fontSize="11">
-                  {item.detail}
-                </text>
-              )}
-            </g>
-          );
-        })}
+            )}
+          </g>
+        );
+      })}
     </svg>
   );
 }

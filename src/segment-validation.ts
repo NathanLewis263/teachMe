@@ -100,5 +100,99 @@ export function normalizeStep(value: unknown): unknown {
     "removeIds",
   ])
     if (step[field] === null || step[field] === "") delete step[field];
+  const scene = step.scene as { nodes?: unknown } | undefined;
+  if (scene && typeof scene === "object" && Array.isArray(scene.nodes))
+    step.scene = {
+      ...scene,
+      nodes: scene.nodes.map((n) => repairShape(n, 40)),
+    };
+  if (Array.isArray(step.annotations))
+    step.annotations = step.annotations.map((n) => repairShape(n, 80));
   return step;
+}
+
+const kindAliases: Record<string, string> = {
+  rect: "highlight",
+  rectangle: "highlight",
+  box: "highlight",
+  square: "highlight",
+  circle: "ellipse",
+  oval: "ellipse",
+};
+const pointCounts: Record<number, string> = { 2: "L", 4: "Q", 6: "C" };
+const clamp = (n: number) => Math.min(1, Math.max(0, n));
+
+// Fix small, unambiguous slips in model geometry; anything else still fails validation.
+function repairShape(value: unknown, labelLimit: number): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const shape = { ...value } as Record<string, unknown>;
+  const numbers = ["x", "y", "width", "height"].map((k) => shape[k]);
+  if (!numbers.every((n) => typeof n === "number" && Number.isFinite(n)))
+    return value;
+  if (typeof shape.kind === "string") {
+    const kind = shape.kind.toLowerCase();
+    shape.kind = kindAliases[kind] ?? kind;
+  }
+  // Keep the box on the board by shrinking it rather than moving it.
+  const x = clamp(shape.x as number),
+    y = clamp(shape.y as number);
+  shape.x = x;
+  shape.y = y;
+  shape.width = Math.min(clamp(shape.width as number), 1 - x);
+  shape.height = Math.min(clamp(shape.height as number), 1 - y);
+  if (shape.color === null) delete shape.color;
+  if (shape.motion === null) delete shape.motion;
+  // Shorten motion that would carry the shape off the board.
+  const motion = shape.motion as Record<string, unknown> | undefined;
+  if (
+    motion &&
+    typeof motion === "object" &&
+    typeof motion.dx === "number" &&
+    typeof motion.dy === "number"
+  )
+    shape.motion = {
+      ...motion,
+      dx: Math.min(1 - x - (shape.width as number), Math.max(-x, motion.dx)),
+      dy: Math.min(1 - y - (shape.height as number), Math.max(-y, motion.dy)),
+    };
+  if (typeof shape.label === "string" && shape.label.length > labelLimit)
+    shape.label = shape.label.slice(0, labelLimit - 1) + "…";
+  if (shape.kind === "path" && Array.isArray(shape.commands)) {
+    const commands = shape.commands
+      .map((entry: unknown) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const command = { ...(entry as Record<string, unknown>) };
+        if (typeof command.command === "string")
+          command.command = command.command.toUpperCase();
+        if (command.command === "Z") return { command: "Z", points: [] };
+        if (
+          !Array.isArray(command.points) ||
+          !command.points.every(
+            (n) => typeof n === "number" && Number.isFinite(n),
+          )
+        )
+          return command;
+        const points = (command.points as number[]).map(clamp);
+        // A point count that fits a different command is a mislabeled command.
+        if (command.command !== "M" && pointCounts[points.length])
+          command.command = pointCounts[points.length];
+        return { ...command, points };
+      })
+      .filter(
+        (entry: unknown) =>
+          !!entry &&
+          typeof entry === "object" &&
+          (entry as { command?: unknown }).command !== undefined,
+      );
+    // A path must start by moving to its first point.
+    const first = commands[0] as
+      { command?: string; points?: number[] } | undefined;
+    if (first && first.command !== "M" && first.points?.length)
+      commands[0] = {
+        command: "M",
+        points: first.points.slice(-2),
+      };
+    shape.commands = commands;
+  }
+  return shape;
 }
