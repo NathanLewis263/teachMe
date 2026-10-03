@@ -32,7 +32,8 @@ export async function planLesson(
   const client = openaiClient();
   const content: OpenAI.Responses.ResponseInputContent[] = [];
   if (image)
-    content.push({ type: "input_image", image_url: image, detail: "auto" });
+    // High detail keeps small controls legible enough to mark precisely.
+    content.push({ type: "input_image", image_url: image, detail: "high" });
   content.push({
     type: "input_text",
     text: JSON.stringify({
