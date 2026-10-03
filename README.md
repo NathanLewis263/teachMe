@@ -36,6 +36,7 @@ On this Mac, add `/usr/local/bin` to your PATH if Node or npm isn't found.
 - Ambiguous or low-confidence routing defaults to a screenshot and both drawing options. Explicit context and drawing restrictions still apply. A routing service failure stops before capture.
 - Choose **Eat my files…** from the seal or menu bar icon, then choose a folder of PDFs, slides, docs, notes or code. Supported files in its subfolders are uploaded too. The lesson model searches the index when useful. Re-choose the folder after changing its files.
 - Drag the blackboard by its title bar. Previous and Next only change the visible slide. Speech and lesson generation keep going.
+- Use the minus button to minimize the whiteboard or speech bubble. Show board and Show restore them without clearing the lesson or stopping audio.
 - End lesson on the board, the bubble’s close button, and Stop & clear in the seal menu cancel recording, requests and playback and clear annotations. Command/Ctrl + Shift + Escape does the same. Plain Escape is not mapped.
 - A small bubble above the seal shows listening, thinking, planning and narration as lesson steps arrive. Continue and checkpoint fallback actions appear there only when needed. There is no Teaching controls pane.
 

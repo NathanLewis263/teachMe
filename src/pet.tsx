@@ -7,6 +7,7 @@ export function Pet() {
   const [detail, setDetail] = useState("");
   const [bubble, setBubble] = useState<PetBubble | null>(null);
   const [safeScreen, setSafeScreen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const [direction, setDirection] = useState(1);
   const transcript = useRef<HTMLParagraphElement>(null);
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -50,6 +51,9 @@ export function Pet() {
   useEffect(() => {
     if (transcript.current) transcript.current.scrollTop = 0;
   }, [bubble?.text]);
+  useEffect(() => {
+    setMinimized(false);
+  }, [bubble?.operation]);
   const voicePending =
     state === "Listening" || state === "Connecting" || state === "Thinking";
   const visible =
@@ -76,6 +80,20 @@ export function Pet() {
               {state === "Ready" && bubble?.text ? "Your lesson" : state}
             </span>
             <button
+              className="bubble-toggle"
+              onClick={() => setMinimized(!minimized)}
+              aria-expanded={!minimized}
+              aria-controls="bubble-content"
+              aria-label={
+                minimized ? "Restore speech bubble" : "Minimize speech bubble"
+              }
+              title={
+                minimized ? "Restore speech bubble" : "Minimize speech bubble"
+              }
+            >
+              {minimized ? "Show" : "−"}
+            </button>
+            <button
               onClick={() => action("end")}
               title="End lesson and clear"
               aria-label="End lesson and clear"
@@ -83,81 +101,84 @@ export function Pet() {
               ×
             </button>
           </header>
-          {detail && (
-            <p className="bubble-error" role="alert">
-              {detail}
-            </p>
-          )}
-          {!voicePending && bubble?.text && (
-            <p className="bubble-transcript" ref={transcript}>
-              {bubble.text}
-            </p>
-          )}
-          {state === "Listening" && (
-            <p className="bubble-help">Release Control–Shift to ask.</p>
-          )}
-          {!voicePending && bubble?.checkpoint && (
-            <div className="bubble-checkpoint">
-              <p>{bubble.checkpoint.expectedAction}</p>
-              <details>
-                <summary>Need a hand?</summary>
-                <p>Expected: {bubble.checkpoint.completionCondition}</p>
-                {bubble.checkpoint.sensitive ? (
-                  <p>This is a private step. Screen checks are off.</p>
-                ) : (
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={safeScreen}
-                      onChange={(e) => setSafeScreen(e.target.checked)}
-                    />{" "}
-                    The intended app is visible with no passwords or private
-                    information. Check sends a screenshot.
-                  </label>
-                )}
-                <div className="bubble-actions">
-                  {!bubble.checkpoint.sensitive && (
-                    <button
-                      disabled={!safeScreen || bubble.checking}
-                      onClick={() => action("check")}
-                    >
-                      {bubble.checking ? "Checking…" : "Check screen"}
-                    </button>
+          {/* Keep the lesson mounted while only its content is hidden. */}
+          <div id="bubble-content" hidden={minimized}>
+            {detail && (
+              <p className="bubble-error" role="alert">
+                {detail}
+              </p>
+            )}
+            {!voicePending && bubble?.text && (
+              <p className="bubble-transcript" ref={transcript}>
+                {bubble.text}
+              </p>
+            )}
+            {state === "Listening" && (
+              <p className="bubble-help">Release Control–Shift to ask.</p>
+            )}
+            {!voicePending && bubble?.checkpoint && (
+              <div className="bubble-checkpoint">
+                <p>{bubble.checkpoint.expectedAction}</p>
+                <details>
+                  <summary>Need a hand?</summary>
+                  <p>Expected: {bubble.checkpoint.completionCondition}</p>
+                  {bubble.checkpoint.sensitive ? (
+                    <p>This is a private step. Screen checks are off.</p>
+                  ) : (
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={safeScreen}
+                        onChange={(e) => setSafeScreen(e.target.checked)}
+                      />{" "}
+                      The intended app is visible with no passwords or private
+                      information. Check sends a screenshot.
+                    </label>
                   )}
-                </div>
-              </details>
+                  <div className="bubble-actions">
+                    {!bubble.checkpoint.sensitive && (
+                      <button
+                        disabled={!safeScreen || bubble.checking}
+                        onClick={() => action("check")}
+                      >
+                        {bubble.checking ? "Checking…" : "Check screen"}
+                      </button>
+                    )}
+                  </div>
+                </details>
+                <button
+                  className="bubble-continue"
+                  onClick={() => action("manual")}
+                >
+                  I’ve done it
+                </button>
+              </div>
+            )}
+            {!voicePending && bubble?.waiting && (
               <button
                 className="bubble-continue"
-                onClick={() => action("manual")}
+                onClick={() => action("continue")}
               >
-                I’ve done it
+                Continue
               </button>
-            </div>
-          )}
-          {!voicePending && bubble?.waiting && (
-            <button
-              className="bubble-continue"
-              onClick={() => action("continue")}
-            >
-              Continue
-            </button>
-          )}
-          {!!bubble?.sources?.length && (
-            <details className="bubble-sources">
-              <summary>Sources</summary>
-              {bubble.sources.map((source) => (
-                <button
-                  key={source.url}
-                  onClick={() => action("source", source.url)}
-                >
-                  {source.title}
-                </button>
-              ))}
-            </details>
-          )}
-          {bubble?.researchUnavailable && (
-            <p className="bubble-help">Web verification was unavailable.</p>
-          )}
+            )}
+            {!!bubble?.sources?.length && (
+              <details className="bubble-sources">
+                <summary>Sources</summary>
+                {bubble.sources.map((source) => (
+                  <button
+                    key={source.url}
+                    onClick={() => action("source", source.url)}
+                  >
+                    {source.title}
+                  </button>
+                ))}
+              </details>
+            )}
+            {bubble?.researchUnavailable && (
+              <p className="bubble-help">Web verification was unavailable.</p>
+            )}
+          </div>
         </section>
       )}
       <div

@@ -668,6 +668,7 @@ body {
   gap: 10px;
 }
 .bubble-status {
+  flex: 1;
   font-weight: 650;
   color: var(--accent);
 }
@@ -688,6 +689,9 @@ body {
   font-size: 20px;
   padding: 0 4px;
   line-height: 24px;
+}
+.pet-bubble header .bubble-toggle {
+  font-size: 13px;
 }
 .bubble-transcript {
   margin: 8px 0 2px;

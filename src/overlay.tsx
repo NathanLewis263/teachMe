@@ -223,6 +223,7 @@ export function Overlay() {
     null,
   );
   const [compact, setCompact] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const fullBoardSize = useRef({ width: 680, height: 400 });
   const arrange = useRef<() => void>(() => {});
@@ -250,6 +251,7 @@ export function Overlay() {
       setLesson(null);
       setPosition(null);
       setCompact(false);
+      setMinimized(false);
       setExpanded(false);
     });
     const frames = window.teachMe.subscribe("lesson", (value: LessonFrame) => {
@@ -315,7 +317,7 @@ export function Overlay() {
       viewport,
       targets,
     );
-    const shouldCompact = full.blocked && !expanded;
+    const shouldCompact = minimized || (full.blocked && !expanded);
     const next = shouldCompact
       ? placeBoard(
           {
@@ -337,7 +339,7 @@ export function Overlay() {
   };
   useEffect(() => {
     arrange.current();
-  }, [lesson, size, expanded]);
+  }, [lesson, size, expanded, minimized]);
   const browse = (index: number) => {
     if (lesson) void window.teachMe.browse(lesson.turn, index);
   };
@@ -416,13 +418,26 @@ export function Overlay() {
               >
                 End lesson
               </button>
-              {compact && (
+              {compact ? (
                 <button
                   className="board-expand"
                   onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => setExpanded(true)}
+                  onClick={() => {
+                    setMinimized(false);
+                    setExpanded(true);
+                  }}
                 >
                   Show board
+                </button>
+              ) : (
+                <button
+                  className="board-expand"
+                  title="Minimize whiteboard"
+                  aria-label="Minimize whiteboard"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setMinimized(true)}
+                >
+                  −
                 </button>
               )}
             </header>
